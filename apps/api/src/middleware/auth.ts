@@ -8,7 +8,8 @@ export type SmartChainRole =
   | 'PROCUREMENT_MANAGER'
   | 'WAREHOUSE_OPERATOR'
   | 'LOGISTICS_MANAGER'
-  | 'PARTNER';
+  | 'PARTNER'
+  | 'SYSTEM_ADMIN';
 
 export interface AuthUser {
   id: string;

@@ -1,6 +1,8 @@
 import type {
   AuditEntryDto,
+  DistributorDirectoryDto,
   ForecastMaterialDto,
+  ManagedUserDto,
   PurchaseOrderDto,
   SalesOrderDto,
   ShipmentDto,
@@ -115,11 +117,22 @@ export const INITIAL_SUPPLIERS: SupplierDto[] = [
   { id: 'sup-2', code: 'SUP-02', name: 'PT Krakatau Logam Abadi', tierType: 'MAIN', slaScore: 95, leadTimeDays: 4, status: 'ACTIVE', haltedDays: 0, materialCategory: 'LOGAM', city: 'Serang' },
   { id: 'sup-3', code: 'SUP-03', name: 'CV Polimer Sejahtera', tierType: 'MAIN', slaScore: 93, leadTimeDays: 3, status: 'ACTIVE', haltedDays: 0, materialCategory: 'POLIMER', city: 'Tangerang' },
   { id: 'sup-4', code: 'SUP-04', name: 'CV Logam Makmur', tierType: 'MAIN', slaScore: 94, leadTimeDays: 3, status: 'ACTIVE', haltedDays: 0, materialCategory: 'LOGAM', city: 'Surabaya' },
+  { id: 'sup-5', code: 'SUP-05', name: 'PT Kimia Sintesa Jaya', tierType: 'MAIN', slaScore: 92, leadTimeDays: 4, status: 'ACTIVE', haltedDays: 0, materialCategory: 'POLIMER', city: 'Bekasi' },
   { id: 'sup-6', code: 'SUP-06', name: 'PT Presisi Teknik Utama', tierType: 'MAIN', slaScore: 95, leadTimeDays: 4, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KOMPONEN', city: 'Bandung' },
+  { id: 'sup-7', code: 'SUP-07', name: 'CV Mur Baut Sentosa', tierType: 'MAIN', slaScore: 90, leadTimeDays: 5, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KOMPONEN', city: 'Sidoarjo' },
   { id: 'sup-8', code: 'SUP-08', name: 'PT Karton Kemas Prima', tierType: 'MAIN', slaScore: 94, leadTimeDays: 2, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KEMASAN', city: 'Karawang' },
+  { id: 'sup-9', code: 'SUP-09', name: 'PT Aneka Plat Indonesia', tierType: 'MAIN', slaScore: 91, leadTimeDays: 5, status: 'ACTIVE', haltedDays: 0, materialCategory: 'LOGAM', city: 'Gresik' },
+  { id: 'sup-10', code: 'SUP-10', name: 'PT Indo Resin Mandiri', tierType: 'MAIN', slaScore: 89, leadTimeDays: 4, status: 'ACTIVE', haltedDays: 0, materialCategory: 'POLIMER', city: 'Cikarang' },
+  { id: 'sup-11', code: 'SUP-11', name: 'PT Fastener Nusantara', tierType: 'MAIN', slaScore: 92, leadTimeDays: 3, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KOMPONEN', city: 'Semarang' },
+  { id: 'sup-12', code: 'SUP-12', name: 'CV Packaging Jaya', tierType: 'MAIN', slaScore: 88, leadTimeDays: 3, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KEMASAN', city: 'Solo' },
+  { id: 'sup-13', code: 'SUP-13', name: 'PT Sinar Metalurgi', tierType: 'MAIN', slaScore: 93, leadTimeDays: 4, status: 'ACTIVE', haltedDays: 0, materialCategory: 'LOGAM', city: 'Jakarta' },
+  { id: 'sup-14', code: 'SUP-14', name: 'PT Petro Polimer Timur', tierType: 'MAIN', slaScore: 90, leadTimeDays: 5, status: 'ACTIVE', haltedDays: 0, materialCategory: 'POLIMER', city: 'Pasuruan' },
+  { id: 'sup-15', code: 'SUP-15', name: 'PT Karya Kemas Nusantara', tierType: 'MAIN', slaScore: 91, leadTimeDays: 3, status: 'ACTIVE', haltedDays: 0, materialCategory: 'KEMASAN', city: 'Mojokerto' },
   { id: 'sup-16', code: 'SUP-16', name: 'PT Mitra Bahan Cadangan', tierType: 'BACKUP', slaScore: 91, leadTimeDays: 5, status: 'STANDBY', haltedDays: 0, materialCategory: 'LOGAM', city: 'Bekasi' },
   { id: 'sup-17', code: 'SUP-17', name: 'PT Cadangan Polimer Prima', tierType: 'BACKUP', slaScore: 90, leadTimeDays: 4, status: 'STANDBY', haltedDays: 0, materialCategory: 'POLIMER', city: 'Depok' },
   { id: 'sup-18', code: 'SUP-18', name: 'CV Komponen Siaga', tierType: 'BACKUP', slaScore: 88, leadTimeDays: 5, status: 'STANDBY', haltedDays: 0, materialCategory: 'KOMPONEN', city: 'Klaten' },
+  { id: 'sup-19', code: 'SUP-19', name: 'PT Kemas Cepat Cadangan', tierType: 'BACKUP', slaScore: 89, leadTimeDays: 3, status: 'STANDBY', haltedDays: 0, materialCategory: 'KEMASAN', city: 'Subang' },
+  { id: 'sup-20', code: 'SUP-20', name: 'PT Multi Logam Alternatif', tierType: 'BACKUP', slaScore: 87, leadTimeDays: 6, status: 'STANDBY', haltedDays: 0, materialCategory: 'LOGAM', city: 'Surabaya' },
 ];
 
 export const INITIAL_PURCHASE_ORDERS: PurchaseOrderDto[] = [
@@ -166,6 +179,16 @@ export const INITIAL_SHIPMENTS: ShipmentDto[] = [
   { id: 'shp-4', shipmentNumber: 'SHP-2026-04', orderNumber: 'ORD-885', distributorName: 'PT Mitra Niaga Malang 7', routeGroup: 'JAWA_TIMUR', carrierName: 'Logistik Timur Trans', baseCost: 5_100_000, consolidatedCost: 5_100_000, isConsolidated: false, consolidationBatchId: null, trackingStatus: 'PLANNED' },
 ];
 
+function buildHistorySeries(scale: number) {
+  const base: Array<number | null> = [410, 435, null, 460, 490, null, 515, 530, null, 555, 580, null];
+  return base.map((val, idx) => ({
+    periodLabel: `M${Math.floor(idx / 4) + 1}-W${(idx % 4) + 1}`,
+    periodIndex: idx + 1,
+    observedQty: val === null ? null : Math.round(val * scale),
+    isMissing: val === null,
+  }));
+}
+
 export const INITIAL_FORECAST_MATERIALS: ForecastMaterialDto[] = [
   {
     materialId: 'mat-1',
@@ -179,6 +202,7 @@ export const INITIAL_FORECAST_MATERIALS: ForecastMaterialDto[] = [
     reorderPoint: 307,
     needsProcurement: false,
     recommendedOrderQty: 0,
+    historySeries: buildHistorySeries(1),
     forecast: {
       forecastNextPeriod: 516,
       completenessPercent: 66.7,
@@ -202,6 +226,7 @@ export const INITIAL_FORECAST_MATERIALS: ForecastMaterialDto[] = [
     reorderPoint: 292,
     needsProcurement: true,
     recommendedOrderQty: 59,
+    historySeries: buildHistorySeries(1.25),
     forecast: {
       forecastNextPeriod: 645,
       completenessPercent: 66.7,
@@ -225,6 +250,7 @@ export const INITIAL_FORECAST_MATERIALS: ForecastMaterialDto[] = [
     reorderPoint: 513,
     needsProcurement: false,
     recommendedOrderQty: 0,
+    historySeries: buildHistorySeries(1.5),
     forecast: {
       forecastNextPeriod: 774,
       completenessPercent: 66.7,
@@ -237,6 +263,41 @@ export const INITIAL_FORECAST_MATERIALS: ForecastMaterialDto[] = [
     },
   },
 ];
+
+export const DISTRIBUTOR_DIRECTORY: DistributorDirectoryDto[] = Array.from({ length: 25 }, (_, i) => {
+  const idx = i + 1;
+  const routes = ['JAWA_BARAT', 'JAWA_TENGAH', 'JAWA_TIMUR', 'LUAR_JAWA'] as const;
+  const routeGroup = routes[i % routes.length]!;
+  const cities = {
+    JAWA_BARAT: ['Jakarta', 'Bekasi', 'Bandung', 'Bogor', 'Cirebon', 'Tangerang', 'Karawang'],
+    JAWA_TENGAH: ['Semarang', 'Solo', 'Yogyakarta', 'Magelang', 'Tegal', 'Purwokerto'],
+    JAWA_TIMUR: ['Surabaya', 'Sidoarjo', 'Malang', 'Gresik', 'Kediri', 'Mojokerto'],
+    LUAR_JAWA: ['Medan', 'Palembang', 'Makassar', 'Balikpapan', 'Denpasar', 'Lampung'],
+  }[routeGroup];
+  const city = cities[i % cities.length]!;
+  const slaTier = idx <= 8 ? 'TIER_1' : idx <= 18 ? 'TIER_2' : 'TIER_3';
+  const slaScore = slaTier === 'TIER_1' ? 96 - (idx % 3) : slaTier === 'TIER_2' ? 88 - (idx % 4) : 78 - (idx % 5);
+  const monthlyQuota = idx === 2 ? 150 : idx === 1 ? 130 : 110 + (idx % 5) * 20;
+  const name =
+    idx === 1
+      ? 'PT Distribusi Timur'
+      : idx === 2
+        ? 'CV Sentosa Jaya'
+        : idx === 3
+          ? 'PT Surya Mandiri'
+          : `PT Mitra Niaga ${city} ${idx}`;
+  return {
+    code: `DIST-${String(idx).padStart(2, '0')}`,
+    name,
+    city,
+    routeGroup,
+    slaTier,
+    slaScore,
+    monthlyQuota,
+    creditLimit: 250_000_000,
+    usedCredit: idx === 2 ? 180_000_000 : 45_000_000 + (idx % 4) * 15_000_000,
+  };
+});
 
 export const INITIAL_AUDIT_LOGS: AuditEntryDto[] = [
   {
@@ -257,4 +318,37 @@ export const INITIAL_AUDIT_LOGS: AuditEntryDto[] = [
     reason: 'Pemeriksaan fisik Gudang #04 (Surabaya) mencatat 320 unit vs RFID 500 unit.',
     createdAt: '2026-11-16T07:02:00.000Z',
   },
+];
+
+export function getPartnerEmailForCode(code: string): string {
+  if (code === 'SUP-01') return 'mitra@bajanusantara.co.id';
+  if (code === 'DIST-01') return 'order@distribusitimur.co.id';
+  if (code === 'DIST-02') return 'order@sentosajaya.co.id';
+  return `${code.toLowerCase()}@mitra.nusantara-mfg.co.id`;
+}
+
+export const INITIAL_MANAGED_USERS: ManagedUserDto[] = [
+  { id: 'usr-int-1', email: 'direksi@nusantara-mfg.co.id', name: 'Dewi Kartika (Direksi)', role: 'DIREKSI', entityCode: null, isActive: true, createdAt: '2026-11-01T08:00:00.000Z' },
+  { id: 'usr-int-2', email: 'pengadaan@nusantara-mfg.co.id', name: 'Budi Santoso (Manajer Pengadaan)', role: 'PROCUREMENT_MANAGER', entityCode: null, isActive: true, createdAt: '2026-11-01T08:05:00.000Z' },
+  { id: 'usr-int-3', email: 'gudang@nusantara-mfg.co.id', name: 'Rina Wijaya (Operator Gudang #04)', role: 'WAREHOUSE_OPERATOR', entityCode: null, isActive: true, createdAt: '2026-11-01T08:10:00.000Z' },
+  { id: 'usr-int-4', email: 'logistik@nusantara-mfg.co.id', name: 'Hendra Pratama (Manajer Logistik)', role: 'LOGISTICS_MANAGER', entityCode: null, isActive: true, createdAt: '2026-11-01T08:15:00.000Z' },
+  { id: 'usr-int-5', email: 'admin@nusantara-mfg.co.id', name: 'Irwan Hakim (Admin Sistem IT)', role: 'SYSTEM_ADMIN', entityCode: null, isActive: true, createdAt: '2026-11-01T08:30:00.000Z' },
+  ...INITIAL_SUPPLIERS.map((s, idx) => ({
+    id: `usr-sup-${idx + 1}`,
+    email: getPartnerEmailForCode(s.code),
+    name: `${s.name} (${s.tierType === 'BACKUP' ? 'Cadangan' : 'Pemasok'})`,
+    role: 'PARTNER' as const,
+    entityCode: s.code,
+    isActive: true,
+    createdAt: '2026-11-01T09:00:00.000Z',
+  })),
+  ...DISTRIBUTOR_DIRECTORY.map((d, idx) => ({
+    id: `usr-dist-${idx + 1}`,
+    email: getPartnerEmailForCode(d.code),
+    name: `${d.name} (Distributor)`,
+    role: 'PARTNER' as const,
+    entityCode: d.code,
+    isActive: true,
+    createdAt: '2026-11-01T09:30:00.000Z',
+  })),
 ];

@@ -1,7 +1,7 @@
 -- SmartChain: Integrated Supply Chain Intelligence
 -- PostgreSQL DDL Schema (PT Nusantara Manufacturing)
 
-CREATE TYPE "UserRole" AS ENUM ('DIREKSI', 'PROCUREMENT_MANAGER', 'WAREHOUSE_OPERATOR', 'LOGISTICS_MANAGER', 'PARTNER');
+CREATE TYPE "UserRole" AS ENUM ('DIREKSI', 'PROCUREMENT_MANAGER', 'WAREHOUSE_OPERATOR', 'LOGISTICS_MANAGER', 'PARTNER', 'SYSTEM_ADMIN');
 CREATE TYPE "SupplierTier" AS ENUM ('MAIN', 'BACKUP');
 CREATE TYPE "SupplierStatus" AS ENUM ('ACTIVE', 'HALTED', 'STANDBY');
 CREATE TYPE "PurchaseOrderStatus" AS ENUM ('DRAFT_RFQ', 'PENDING_APPROVAL', 'APPROVED', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED');
@@ -17,6 +17,7 @@ CREATE TABLE user_accounts (
   name TEXT NOT NULL,
   role "UserRole" NOT NULL,
   entity_code TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   password_hash TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

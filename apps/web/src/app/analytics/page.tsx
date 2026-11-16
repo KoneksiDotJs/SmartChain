@@ -1,13 +1,43 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { HybridWmaForecastChart } from '@/components/charts/HybridWmaForecastChart';
+import { InteractiveBarChart } from '@/components/charts/InteractiveBarChart';
 import { TrendChartIcon } from '@/components/ui/Icons';
 import { PaperCard } from '@/components/ui/PaperCard';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useSmartChainMode } from '@/hooks/useSmartChainMode';
 
+type AuditScope = 'ALL' | 'SRM_PO' | 'WMS' | 'ORDER_TMS';
+
 export default function AnalyticsPage() {
   const { forecasts, auditLogs, stressMode } = useSmartChainMode();
+  const [auditScope, setAuditScope] = useState<AuditScope>('ALL');
+  const [auditQuery, setAuditQuery] = useState('');
+
+  const surgeFactor = stressMode ? 3 : 1;
+
+  const filteredLogs = auditLogs.filter((log) => {
+    const matchesScope =
+      auditScope === 'ALL'
+        ? true
+        : auditScope === 'SRM_PO'
+          ? log.entityType === 'Supplier' || log.entityType === 'PurchaseOrder'
+          : auditScope === 'WMS'
+            ? log.entityType === 'Warehouse' ||
+              log.entityType === 'InventoryStock' ||
+              log.entityType === 'RfidSyncLog'
+            : log.entityType === 'SalesOrder' ||
+              log.entityType === 'SalesOrderBatch' ||
+              log.entityType === 'ShipmentBatch';
+    const q = auditQuery.trim().toLowerCase();
+    const matchesText =
+      !q ||
+      log.action.toLowerCase().includes(q) ||
+      (log.reason ?? '').toLowerCase().includes(q) ||
+      log.entityId.toLowerCase().includes(q);
+    return matchesScope && matchesText;
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -35,6 +65,32 @@ export default function AnalyticsPage() {
             Kelengkapan Historis: 66.7% (WMA Hibrida)
           </span>
         </StatusPill>
+      </div>
+
+      <div className="sc-split-grid">
+        <HybridWmaForecastChart materials={forecasts} surgeFactor={surgeFactor} />
+
+        <InteractiveBarChart
+          title="Stok Fisik vs Batas Reorder Point (ROP)"
+          subtitle="Material dengan batang di bawah garis putus-putus wajib segera dibuatkan PO."
+          primaryLabel="Stok Fisik"
+          secondaryLabel="Safety Stock"
+          thresholdLabel="Batas ROP"
+          unitSuffix="unit"
+          data={forecasts.map((item) => ({
+            id: item.materialId,
+            label: item.sku,
+            sublabel: item.name,
+            primaryValue: item.currentStock,
+            secondaryValue: item.dynamicSafetyStock,
+            thresholdValue: item.reorderPoint,
+            tone: item.needsProcurement ? 'accent' : 'ink',
+            secondaryTone: 'warn',
+            note: item.needsProcurement
+              ? `Di bawah ROP — rekomendasikan PO +${item.recommendedOrderQty}`
+              : 'Aman di atas ROP',
+          }))}
+        />
       </div>
 
       <div className="sc-table-wrap">
@@ -94,11 +150,47 @@ export default function AnalyticsPage() {
         </PaperCard>
 
         <PaperCard>
-          <h3 className="sc-section-head">Immutable Audit Log (Append-Only)</h3>
-          <p className="sc-section-desc">
-            Seluruh mutasi stok, karantina selisih, auto-RFQ, dan penahanan order anomali tercatat
-            permanen.
-          </p>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            <div>
+              <h3 className="sc-section-head" style={{ marginBottom: 2 }}>
+                Immutable Audit Log ({filteredLogs.length})
+              </h3>
+              <p className="sc-section-desc" style={{ marginBottom: 0 }}>
+                Filter jejak audit permanen berdasarkan modul atau kata kunci.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            <select
+              className="sc-select"
+              aria-label="Filter modul audit"
+              value={auditScope}
+              onChange={(e) => setAuditScope(e.target.value as AuditScope)}
+            >
+              <option value="ALL">Semua Modul</option>
+              <option value="SRM_PO">SRM &amp; PO</option>
+              <option value="WMS">WMS &amp; Offline</option>
+              <option value="ORDER_TMS">Order &amp; TMS</option>
+            </select>
+            <input
+              type="search"
+              className="sc-input"
+              style={{ flex: 1, minWidth: 180 }}
+              placeholder="Cari aksi atau alasan..."
+              value={auditQuery}
+              onChange={(e) => setAuditQuery(e.target.value)}
+            />
+          </div>
 
           <div
             className="sc-mono"
@@ -111,7 +203,7 @@ export default function AnalyticsPage() {
               overflowY: 'auto',
             }}
           >
-            {auditLogs.map((log) => (
+            {filteredLogs.map((log) => (
               <div
                 key={log.id}
                 style={{

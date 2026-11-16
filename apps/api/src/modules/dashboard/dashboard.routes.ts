@@ -19,7 +19,13 @@ export function createDashboardRouter(prisma: PrismaClient): Router {
   router.get(
     '/audit-logs',
     requireAuth,
-    requireRoles('DIREKSI', 'PROCUREMENT_MANAGER', 'WAREHOUSE_OPERATOR', 'LOGISTICS_MANAGER'),
+    requireRoles(
+      'DIREKSI',
+      'PROCUREMENT_MANAGER',
+      'WAREHOUSE_OPERATOR',
+      'LOGISTICS_MANAGER',
+      'SYSTEM_ADMIN',
+    ),
     (req, res, next) => controller.getAuditLogs(req, res, next),
   );
 

@@ -3,7 +3,32 @@ export type SmartChainRole =
   | 'PROCUREMENT_MANAGER'
   | 'WAREHOUSE_OPERATOR'
   | 'LOGISTICS_MANAGER'
-  | 'PARTNER';
+  | 'PARTNER'
+  | 'SYSTEM_ADMIN';
+
+export interface ManagedUserDto {
+  id: string;
+  email: string;
+  name: string;
+  role: SmartChainRole;
+  entityCode: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AuthUserDto {
+  id: string;
+  email: string;
+  name: string;
+  role: SmartChainRole;
+  entityCode?: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: AuthUserDto;
+  authMode: 'jwt-api' | 'local-verified';
+}
 
 export interface SupplierDto {
   id: string;
@@ -85,6 +110,25 @@ export interface ShipmentDto {
   trackingStatus: string;
 }
 
+export interface DemandHistoryPointDto {
+  periodLabel: string;
+  periodIndex: number;
+  observedQty: number | null;
+  isMissing: boolean;
+}
+
+export interface DistributorDirectoryDto {
+  code: string;
+  name: string;
+  city: string;
+  routeGroup: 'JAWA_BARAT' | 'JAWA_TENGAH' | 'JAWA_TIMUR' | 'LUAR_JAWA';
+  slaTier: 'TIER_1' | 'TIER_2' | 'TIER_3';
+  slaScore: number;
+  monthlyQuota: number;
+  creditLimit: number;
+  usedCredit: number;
+}
+
 export interface ForecastMaterialDto {
   materialId: string;
   sku: string;
@@ -97,6 +141,7 @@ export interface ForecastMaterialDto {
   reorderPoint: number;
   needsProcurement: boolean;
   recommendedOrderQty: number;
+  historySeries: DemandHistoryPointDto[];
   forecast: {
     forecastNextPeriod: number;
     completenessPercent: number;

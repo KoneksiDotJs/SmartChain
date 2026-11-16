@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { ShipmentCandidate } from './tms.domain.js';
 
 export interface TmsRepository {
-  listShipments(routeGroupFilter?: string): Promise<ShipmentCandidate[]>;
+  listShipments(routeGroupFilter?: string, distributorCodeFilter?: string): Promise<ShipmentCandidate[]>;
   applyConsolidationUpdates(
     updates: Array<{ id: string; consolidatedCost: number; consolidationBatchId: string }>,
   ): Promise<void>;
@@ -10,9 +10,17 @@ export interface TmsRepository {
 
 export function createPrismaTmsRepository(prisma: PrismaClient): TmsRepository {
   return {
-    async listShipments(routeGroupFilter?: string): Promise<ShipmentCandidate[]> {
+    async listShipments(
+      routeGroupFilter?: string,
+      distributorCodeFilter?: string,
+    ): Promise<ShipmentCandidate[]> {
       const rows = await prisma.shipment.findMany({
-        where: routeGroupFilter ? { routeGroup: routeGroupFilter } : undefined,
+        where: {
+          ...(routeGroupFilter ? { routeGroup: routeGroupFilter } : {}),
+          ...(distributorCodeFilter
+            ? { order: { distributor: { code: distributorCodeFilter } } }
+            : {}),
+        },
         include: {
           order: {
             include: {

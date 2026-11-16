@@ -33,8 +33,11 @@ export function createOrdersController(service: ReturnType<typeof createOrdersSe
     async validateOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
       try {
         const body = parseWithSchema(validateSchema, req.body);
+        const scopedDistributor =
+          req.user?.role === 'PARTNER' ? req.user.entityCode : body.distributorIdOrCode;
         const result = await service.validateAndAllocateOrder({
           ...body,
+          distributorIdOrCode: scopedDistributor,
           actorId: req.user?.id ?? 'system',
           actorRole: req.user?.role ?? 'SYSTEM',
         });

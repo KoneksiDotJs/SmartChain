@@ -5,6 +5,8 @@ import { allocateOrdersWithAnomalyGuard } from '../modules/orders/orders.domain.
 import { createOrdersService } from '../modules/orders/orders.service.js';
 import { createSrmService } from '../modules/srm/srm.service.js';
 import { createTmsService } from '../modules/tms/tms.service.js';
+import type { ManagedUserRow } from '../modules/users/users.repository.js';
+import { createUsersService } from '../modules/users/users.service.js';
 import { createWmsService } from '../modules/wms/wms.service.js';
 import { requireRoles } from '../middleware/auth.js';
 import { createInMemoryAuditWriter, createInMemoryRepositories } from './helpers/mockStore.js';
@@ -234,4 +236,96 @@ test('RBAC guard denies unauthorized PARTNER role from internal warehouse reconc
 
   assert.ok(capturedError instanceof Error);
   assert.equal((capturedError as { statusCode?: number }).statusCode, 403);
+});
+
+test('Separation of Duties: SYSTEM_ADMIN manages users with audit log but is blocked from operational WMS/SRM writes', async () => {
+  // 1. SYSTEM_ADMIN is denied 403 on operational warehouse & procurement endpoints
+  const wmsGuard = requireRoles('WAREHOUSE_OPERATOR');
+  let wmsError: unknown = null;
+  wmsGuard(
+    {
+      user: {
+        id: 'admin-1',
+        email: 'admin@nusantara-mfg.co.id',
+        name: 'Irwan Hakim',
+        role: 'SYSTEM_ADMIN',
+      },
+    } as never,
+    {} as never,
+    (err?: unknown) => {
+      wmsError = err ?? null;
+    },
+  );
+  assert.equal((wmsError as { statusCode?: number }).statusCode, 403);
+
+  // 2. SYSTEM_ADMIN can create & deactivate accounts while preventing self-deactivation
+  const audit = createInMemoryAuditWriter();
+  const store: ManagedUserRow[] = [
+    {
+      id: 'admin-1',
+      email: 'admin@nusantara-mfg.co.id',
+      name: 'Irwan Hakim',
+      role: 'SYSTEM_ADMIN',
+      entityCode: null,
+      isActive: true,
+      createdAt: new Date(),
+    },
+  ];
+  const usersService = createUsersService(
+    {
+      async listAll() {
+        return [...store];
+      },
+      async findById(id) {
+        return store.find((u) => u.id === id) ?? null;
+      },
+      async findByEmail(email) {
+        return store.find((u) => u.email === email) ?? null;
+      },
+      async create(input) {
+        const created = {
+          id: `usr-${store.length + 1}`,
+          email: input.email,
+          name: input.name,
+          role: input.role,
+          entityCode: input.entityCode,
+          isActive: true,
+          createdAt: new Date(),
+        };
+        store.push(created);
+        return created;
+      },
+      async updateAccess(id, patch) {
+        const target = store.find((u) => u.id === id)!;
+        if (patch.role !== undefined) target.role = patch.role;
+        if (patch.entityCode !== undefined) target.entityCode = patch.entityCode;
+        if (patch.isActive !== undefined) target.isActive = patch.isActive;
+        return { ...target };
+      },
+      async updatePasswordHash() {},
+    },
+    audit,
+  );
+
+  const createdUser = await usersService.createUser(
+    {
+      email: 'operator.baru@nusantara-mfg.co.id',
+      name: 'Andi Gudang',
+      role: 'WAREHOUSE_OPERATOR',
+      password: 'Password123',
+    },
+    { id: 'admin-1', role: 'SYSTEM_ADMIN' },
+  );
+  assert.equal(createdUser.role, 'WAREHOUSE_OPERATOR');
+  assert.equal(audit.entries.at(-1)?.action, 'USER_ACCOUNT_CREATED');
+
+  await assert.rejects(
+    () =>
+      usersService.updateUserAccess(
+        'admin-1',
+        { isActive: false },
+        { id: 'admin-1', role: 'SYSTEM_ADMIN' },
+      ),
+    /menonaktifkan akunnya sendiri/,
+  );
 });

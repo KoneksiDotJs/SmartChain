@@ -2,84 +2,90 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import React from 'react';
+import React, { useState } from 'react';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { SmartChainLogoIcon } from '@/components/ui/Icons';
+import { StatusPill } from '@/components/ui/StatusPill';
 import { useSmartChainMode } from '@/hooks/useSmartChainMode';
-import type { SmartChainRole } from '@/lib/types';
-
-const NAV_ITEMS = [
-  { href: '/', label: 'Ringkasan' },
-  { href: '/srm', label: 'SRM & PO' },
-  { href: '/wms', label: 'WMS & Offline' },
-  { href: '/tms', label: 'Order & TMS' },
-  { href: '/analytics', label: 'Analitik & Audit' },
-];
-
-const ROLE_OPTIONS: Array<{ value: SmartChainRole; label: string }> = [
-  { value: 'DIREKSI', label: 'Peran: Direksi' },
-  { value: 'PROCUREMENT_MANAGER', label: 'Peran: Pengadaan' },
-  { value: 'WAREHOUSE_OPERATOR', label: 'Peran: Gudang' },
-  { value: 'LOGISTICS_MANAGER', label: 'Peran: Logistik' },
-  { value: 'PARTNER', label: 'Peran: Mitra' },
-];
+import { getHomeRouteForRole, getNavItemsForRole, getRoleLabel } from '@/lib/rbac';
 
 export function Topbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { role, setRole, setStressMode } = useSmartChainMode();
+  const { session, offlineQueue, logout } = useSmartChainMode();
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
+
+  if (!session) return null;
+
+  const navItems = getNavItemsForRole(session.user.role);
+  const homeRoute = getHomeRouteForRole(session.user.role);
 
   return (
-    <header className="sc-topbar">
-      <div className="sc-container sc-topbar-inner">
-        <Link href="/" className="sc-brand">
-          <SmartChainLogoIcon size={22} />
-          <span>SmartChain</span>
-        </Link>
+    <>
+      <header className="sc-topbar">
+        <div className="sc-container sc-topbar-inner">
+          <Link href={homeRoute} className="sc-brand">
+            <SmartChainLogoIcon size={22} />
+            <span>SmartChain</span>
+          </Link>
 
-        <nav className="sc-nav" aria-label="Navigasi modul">
-          {NAV_ITEMS.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`sc-nav-link ${active ? 'active' : ''}`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+          <nav className="sc-nav" aria-label="Navigasi modul peran">
+            {navItems.map((item) => {
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`sc-nav-link ${active ? 'active' : ''}`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <label htmlFor="rbac-role-select" className="sr-only">
-            Pilih peran pengguna RBAC
-          </label>
-          <select
-            id="rbac-role-select"
-            className="sc-select"
-            value={role}
-            onChange={(e) => setRole(e.target.value as SmartChainRole)}
-          >
-            {ROLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ textAlign: 'right', lineHeight: 1.25 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>{session.user.name}</div>
+              <div className="sc-mono" style={{ fontSize: 11.5, color: 'var(--ink-muted)' }}>
+                {getRoleLabel(session.user)}
+              </div>
+            </div>
 
-          <button
-            type="button"
-            className="sc-btn-primary"
-            onClick={() => {
-              setStressMode(true);
-              router.push('/');
-            }}
-          >
-            Uji Gangguan
-          </button>
+            <StatusPill variant={session.authMode === 'jwt-api' ? 'ok' : 'warn'}>
+              {session.authMode === 'jwt-api' ? 'Online' : 'Offline'}
+            </StatusPill>
+
+            <button
+              type="button"
+              className="sc-btn-secondary"
+              onClick={() => setLogoutModalOpen(true)}
+            >
+              Keluar
+            </button>
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+
+      <ConfirmModal
+        open={logoutModalOpen}
+        title="Konfirmasi Keluar dari SmartChain"
+        description={`Anda akan mengakhiri sesi aktif untuk ${session.user.name} (${getRoleLabel(session.user)}).`}
+        detailNote={
+          offlineQueue.length > 0
+            ? `Perhatian: masih ada ${offlineQueue.length} transaksi di antrean IndexedDB lokal yang belum disinkronkan.`
+            : `Token sesi akan dihapus dan Anda diarahkan kembali ke halaman login.`
+        }
+        confirmLabel="Ya, Keluar Sekarang"
+        cancelLabel="Tetap Masuk"
+        tone={offlineQueue.length > 0 ? 'accent' : 'primary'}
+        onCancel={() => setLogoutModalOpen(false)}
+        onConfirm={() => {
+          setLogoutModalOpen(false);
+          logout();
+          router.push('/login');
+        }}
+      />
+    </>
   );
 }

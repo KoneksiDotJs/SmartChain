@@ -10,7 +10,7 @@ export function createAuthRouter(prisma: PrismaClient): Router {
   const controller = createAuthController(service);
 
   router.post('/login', (req, res, next) => controller.login(req, res, next));
-  router.post('/demo-token', (req, res, next) => controller.demoSwitch(req, res, next));
+  router.get('/personas', (req, res) => controller.personas(req, res));
   router.get('/me', requireAuth, (req, res) => controller.me(req, res));
 
   return router;

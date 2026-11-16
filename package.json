@@ -2,6 +2,7 @@
   "name": "smartchain-monorepo",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "SmartChain: Integrated Supply Chain Intelligence for PT Nusantara Manufacturing",
   "workspaces": [
     "apps/api",

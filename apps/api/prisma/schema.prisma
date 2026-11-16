@@ -13,6 +13,7 @@ enum UserRole {
   WAREHOUSE_OPERATOR
   LOGISTICS_MANAGER
   PARTNER
+  SYSTEM_ADMIN
 }
 
 enum SupplierTier {
@@ -73,6 +74,7 @@ model UserAccount {
   name         String
   role         UserRole
   entityCode   String?  // Optional linked supplier/distributor code for PARTNER role
+  isActive     Boolean  @default(true)
   passwordHash String
   createdAt    DateTime @default(now())
 

@@ -1,10 +1,16 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { smartChainApi } from '@/lib/apiClient';
+import {
+  authenticateWithPassword,
+  loadStoredSession,
+  saveStoredSession,
+  smartChainApi,
+} from '@/lib/apiClient';
 import {
   INITIAL_AUDIT_LOGS,
   INITIAL_FORECAST_MATERIALS,
+  INITIAL_MANAGED_USERS,
   INITIAL_PURCHASE_ORDERS,
   INITIAL_SALES_ORDERS,
   INITIAL_SHIPMENTS,
@@ -18,9 +24,12 @@ import {
   listQueuedScans,
   type QueuedRfidScan,
 } from '@/lib/offlineQueue';
+import { getHomeRouteForRole } from '@/lib/rbac';
 import type {
   AuditEntryDto,
+  AuthSession,
   ForecastMaterialDto,
+  ManagedUserDto,
   PurchaseOrderDto,
   SalesOrderDto,
   ShipmentDto,
@@ -31,10 +40,12 @@ import type {
 import { ToastRegion } from '@/components/ui/ToastRegion';
 
 interface SmartChainContextValue {
+  session: AuthSession | null;
+  authReady: boolean;
+  login: (email: string, password: string) => Promise<{ ok: boolean; message?: string; homeRoute?: string }>;
+  logout: () => void;
   stressMode: boolean;
   setStressMode: (next: boolean) => void;
-  role: SmartChainRole;
-  setRole: (next: SmartChainRole) => void;
   suppliers: SupplierDto[];
   purchaseOrders: PurchaseOrderDto[];
   warehouses: WarehouseStockDto[];
@@ -42,28 +53,61 @@ interface SmartChainContextValue {
   shipments: ShipmentDto[];
   forecasts: ForecastMaterialDto[];
   auditLogs: AuditEntryDto[];
+  managedUsers: ManagedUserDto[];
   offlineQueue: QueuedRfidScan[];
+  lastSyncedBatch: QueuedRfidScan[];
   rfqTriggered: boolean;
   wh04Offline: boolean;
   reconciled: boolean;
   anomalyFilterActive: boolean;
   tmsConsolidated: boolean;
   showToast: (message: string) => void;
+  toggleSupplierHalt: (supplierCode: string) => Promise<void>;
   triggerRfqFallback: () => Promise<void>;
-  toggleWh04Offline: () => void;
-  scanWh04Rfid: (deltaQty?: number) => Promise<void>;
-  syncOfflineQueue: () => Promise<void>;
-  reconcileWh04: () => Promise<void>;
+  createPurchaseOrder: (input: {
+    supplierCode: string;
+    materialSku: string;
+    factoryName: string;
+    quantity: number;
+    notes?: string;
+  }) => Promise<void>;
+  updatePoStatus: (poId: string, nextStatus: 'APPROVED' | 'IN_TRANSIT' | 'RECEIVED') => Promise<void>;
+  toggleWh04Offline: (warehouseCode?: string) => void;
+  scanWh04Rfid: (
+    deltaQty?: number,
+    direction?: 'IN' | 'OUT' | 'CYCLE_COUNT',
+    warehouseCode?: string,
+  ) => Promise<void>;
+  syncOfflineQueue: (warehouseCode?: string) => Promise<void>;
+  replayLastBatchIdempotency: () => Promise<void>;
+  reconcileWh04: (warehouseCode?: string) => Promise<void>;
   toggleAnomalyFilter: () => Promise<void>;
-  submitOrderValidation: (distributorCode: string, requestedQty: number, depositConfirmed: boolean) => void;
+  verifyAndApproveOrder: (orderId: string) => Promise<void>;
+  rejectOrder: (orderId: string) => void;
+  runSlaSurgeAllocation: (availableStockOverride?: number) => Promise<void>;
+  submitOrderValidation: (distributorCode: string, requestedQty: number, depositConfirmed: boolean) => Promise<void>;
   consolidateTmsRoutes: () => Promise<void>;
+  createManagedUser: (input: {
+    email: string;
+    name: string;
+    role: SmartChainRole;
+    entityCode?: string;
+    password: string;
+  }) => Promise<boolean>;
+  updateManagedUserAccess: (
+    userId: string,
+    patch: { role?: SmartChainRole; isActive?: boolean },
+  ) => Promise<void>;
+  resetManagedUserPassword: (userId: string, newPassword: string) => Promise<void>;
 }
 
 const SmartChainContext = createContext<SmartChainContextValue | null>(null);
 
 export function SmartChainProvider({ children }: { children: React.ReactNode }) {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
   const [stressMode, setStressModeState] = useState(false);
-  const [role, setRoleState] = useState<SmartChainRole>('DIREKSI');
   const [suppliers, setSuppliers] = useState<SupplierDto[]>(INITIAL_SUPPLIERS);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderDto[]>(INITIAL_PURCHASE_ORDERS);
   const [warehouses, setWarehouses] = useState<WarehouseStockDto[]>(INITIAL_WAREHOUSE_STOCKS);
@@ -71,7 +115,9 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
   const [shipments, setShipments] = useState<ShipmentDto[]>(INITIAL_SHIPMENTS);
   const [forecasts, setForecasts] = useState<ForecastMaterialDto[]>(INITIAL_FORECAST_MATERIALS);
   const [auditLogs, setAuditLogs] = useState<AuditEntryDto[]>(INITIAL_AUDIT_LOGS);
+  const [managedUsers, setManagedUsers] = useState<ManagedUserDto[]>(INITIAL_MANAGED_USERS);
   const [offlineQueue, setOfflineQueue] = useState<QueuedRfidScan[]>([]);
+  const [lastSyncedBatch, setLastSyncedBatch] = useState<QueuedRfidScan[]>([]);
 
   const [rfqTriggered, setRfqTriggered] = useState(false);
   const [wh04Offline, setWh04Offline] = useState(false);
@@ -84,7 +130,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToastMessage(null), 3200);
+    toastTimerRef.current = setTimeout(() => setToastMessage(null), 3400);
   }, []);
 
   const appendAudit = useCallback(
@@ -101,18 +147,50 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
     [],
   );
 
-  useEffect(() => {
-    void listQueuedScans().then(setOfflineQueue).catch(() => {});
+  const hydrateFromSession = useCallback(async (activeSession: AuthSession | null) => {
+    if (!activeSession || activeSession.authMode !== 'jwt-api') return;
+    const live = await smartChainApi.fetchRoleWorkspaceData(activeSession);
+    if (live.suppliers && live.suppliers.length > 0) setSuppliers(live.suppliers);
+    if (live.purchaseOrders) setPurchaseOrders(live.purchaseOrders);
+    if (live.warehouses && live.warehouses.length > 0) setWarehouses(live.warehouses);
+    if (live.salesOrders) setSalesOrders(live.salesOrders);
+    if (live.shipments) setShipments(live.shipments);
+    if (live.forecasts && live.forecasts.length > 0) setForecasts(live.forecasts);
+    if (live.auditLogs && live.auditLogs.length > 0) setAuditLogs(live.auditLogs);
+    if (live.managedUsers && live.managedUsers.length > 0) setManagedUsers(live.managedUsers);
   }, []);
 
-  const setRole = useCallback(
-    (next: SmartChainRole) => {
-      setRoleState(next);
-      void smartChainApi.switchRole(next);
-      showToast(`Peran aktif beralih ke ${next}`);
+  useEffect(() => {
+    const stored = loadStoredSession();
+    setSession(stored);
+    setAuthReady(true);
+    void hydrateFromSession(stored);
+    void listQueuedScans().then(setOfflineQueue).catch(() => {});
+  }, [hydrateFromSession]);
+
+  const activeRole = session?.user.role ?? 'DIREKSI';
+  const activeToken = session?.token ?? null;
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const res = await authenticateWithPassword(email, password);
+      if (!res.ok) {
+        return { ok: false, message: res.message };
+      }
+      setSession(res.session);
+      void hydrateFromSession(res.session);
+      const homeRoute = getHomeRouteForRole(res.session.user.role);
+      showToast(`Masuk sebagai ${res.session.user.name}`);
+      return { ok: true, homeRoute };
     },
-    [showToast],
+    [hydrateFromSession, showToast],
   );
+
+  const logout = useCallback(() => {
+    saveStoredSession(null);
+    setSession(null);
+    showToast('Sesi pengguna telah diakhiri');
+  }, [showToast]);
 
   const setStressMode = useCallback(
     (next: boolean) => {
@@ -120,11 +198,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
       setSuppliers((prev) =>
         prev.map((s) =>
           s.code === 'SUP-01'
-            ? {
-                ...s,
-                status: next ? 'HALTED' : 'ACTIVE',
-                haltedDays: next ? 14 : 0,
-              }
+            ? { ...s, status: next ? 'HALTED' : 'ACTIVE', haltedDays: next ? 14 : 0 }
             : s,
         ),
       );
@@ -151,13 +225,49 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
     [showToast],
   );
 
+  const toggleSupplierHalt = useCallback(
+    async (supplierCode: string) => {
+      if (activeRole !== 'PROCUREMENT_MANAGER') {
+        showToast('Hanya Manajer Pengadaan yang berhak mengubah status pemasok');
+        return;
+      }
+      const target = suppliers.find((s) => s.code === supplierCode);
+      if (!target) return;
+      const nextStatus = target.status === 'HALTED' ? 'ACTIVE' : 'HALTED';
+      const nextDays = nextStatus === 'HALTED' ? 14 : 0;
+
+      await smartChainApi.updateSupplierStatus(activeToken, supplierCode, nextStatus, nextDays);
+      setSuppliers((prev) =>
+        prev.map((s) =>
+          s.code === supplierCode ? { ...s, status: nextStatus, haltedDays: nextDays } : s,
+        ),
+      );
+      appendAudit({
+        entityType: 'Supplier',
+        entityId: supplierCode,
+        action: 'SUPPLIER_STATUS_CHANGED',
+        actorRole: activeRole,
+        reason:
+          nextStatus === 'HALTED'
+            ? `${supplierCode} ditandai berhenti pasokan 14 hari.`
+            : `${supplierCode} dipulihkan ke status aktif.`,
+      });
+      showToast(
+        nextStatus === 'HALTED'
+          ? `${supplierCode} ditandai berhenti 14 hari — siap RFQ cadangan`
+          : `${supplierCode} kembali aktif`,
+      );
+    },
+    [activeRole, activeToken, appendAudit, showToast, suppliers],
+  );
+
   const triggerRfqFallback = useCallback(async () => {
-    if (role === 'PARTNER' || role === 'WAREHOUSE_OPERATOR') {
-      showToast(`Peran ${role} tidak memiliki otorisasi memicu RFQ`);
+    if (activeRole !== 'PROCUREMENT_MANAGER') {
+      showToast('Operasi ini khusus Manajer Pengadaan & Produksi');
       return;
     }
 
-    await smartChainApi.triggerRfqFallback(role, 'SUP-01');
+    await smartChainApi.triggerRfqFallback(activeToken, 'SUP-01');
     setSuppliers((prev) =>
       prev.map((s) => {
         if (s.code === 'SUP-01') return { ...s, status: 'HALTED', haltedDays: 14 };
@@ -191,154 +301,283 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         entityType: 'PurchaseOrder',
         entityId: rfqNo,
         action: 'SRM_RFQ_FALLBACK_TRIGGERED',
-        actorRole: role,
+        actorRole: activeRole,
         reason: 'SUP-01 berhenti 14 hari -> RFQ otomatis dikirim ke SUP-16 (Cadangan Tier-2).',
       });
     }
     showToast('RFQ otomatis dikirim ke pemasok cadangan Tier-2 (SUP-16)');
-  }, [appendAudit, rfqTriggered, role, showToast]);
+  }, [activeRole, activeToken, appendAudit, rfqTriggered, showToast]);
 
-  const toggleWh04Offline = useCallback(() => {
-    const nextOffline = !wh04Offline;
-    setWh04Offline(nextOffline);
-    setWarehouses((prev) =>
-      prev.map((w) =>
-        w.warehouseCode === 'WH-04'
-          ? {
-              ...w,
-              networkStatus: nextOffline ? 'OFFLINE' : 'ONLINE',
-              offlineHours: nextOffline ? 48 : 0,
-            }
-          : w,
-      ),
-    );
-    appendAudit({
-      entityType: 'Warehouse',
-      entityId: 'WH-04',
-      action: nextOffline ? 'WAREHOUSE_OFFLINE_48H' : 'WAREHOUSE_ONLINE_RESTORED',
-      actorRole: role,
-      reason: nextOffline
-        ? 'Gudang #04 (Surabaya) terputus jaringan; mode Store-and-Forward IndexedDB aktif.'
-        : 'Koneksi Gudang #04 pulih; siap sinkronisasi antrean lokal.',
-    });
-    showToast(nextOffline ? 'Gudang #04 masuk mode offline (48 jam)' : 'Gudang #04 kembali online');
-  }, [appendAudit, role, showToast, wh04Offline]);
+  const createPurchaseOrder = useCallback(
+    async (input: {
+      supplierCode: string;
+      materialSku: string;
+      factoryName: string;
+      quantity: number;
+      notes?: string;
+    }) => {
+      if (activeRole !== 'PROCUREMENT_MANAGER') {
+        showToast('Hanya Manajer Pengadaan yang dapat menerbitkan PO');
+        return;
+      }
+      const sup = suppliers.find((s) => s.code === input.supplierCode) ?? suppliers[0]!;
+      const mat = forecasts.find((m) => m.sku === input.materialSku) ?? forecasts[0]!;
+      const poNo = `PO-${Date.now().toString().slice(-6)}`;
 
-  const scanWh04Rfid = useCallback(
-    async (deltaQty = 10) => {
-      const key = createIdempotencyKey('WH-04');
-      const scan: QueuedRfidScan = {
-        idempotencyKey: key,
-        stockId: 'stk-wh04',
-        warehouseCode: 'WH-04',
-        deltaQty,
-        direction: 'IN',
-        offlineTimestamp: new Date().toISOString(),
-        wasOffline: wh04Offline,
-      };
+      await smartChainApi.createPo(activeToken, {
+        supplierIdOrCode: input.supplierCode,
+        materialIdOrSku: input.materialSku,
+        factoryIdOrCode: 'FAC-01',
+        quantity: input.quantity,
+        notes: input.notes,
+      });
 
+      setPurchaseOrders((prev) => [
+        {
+          id: `po-${Date.now()}`,
+          poNumber: poNo,
+          supplierCode: sup.code,
+          supplierName: sup.name,
+          materialSku: mat.sku,
+          materialName: mat.name,
+          factoryName: input.factoryName,
+          quantity: input.quantity,
+          isRfqFallback: sup.tierType === 'BACKUP',
+          triggeredByRop: mat.needsProcurement,
+          status: 'PENDING_APPROVAL',
+          expectedDate: new Date(Date.now() + sup.leadTimeDays * 86_400_000).toISOString(),
+          notes: input.notes ?? 'Pengadaan terjadwal dari Meja Kerja Pengadaan',
+        },
+        ...prev,
+      ]);
+      appendAudit({
+        entityType: 'PurchaseOrder',
+        entityId: poNo,
+        action: 'PO_CREATED',
+        actorRole: activeRole,
+        reason: `Terbit ${poNo} ke ${sup.code} (${input.quantity} unit ${mat.sku}).`,
+      });
+      showToast(`${poNo} diterbitkan ke ${sup.name}`);
+    },
+    [activeRole, activeToken, appendAudit, forecasts, showToast, suppliers],
+  );
+
+  const updatePoStatus = useCallback(
+    async (poId: string, nextStatus: 'APPROVED' | 'IN_TRANSIT' | 'RECEIVED') => {
+      if (activeRole !== 'PROCUREMENT_MANAGER' && activeRole !== 'PARTNER') {
+        showToast('Peran Anda tidak berhak mengubah status PO');
+        return;
+      }
+      await smartChainApi.updatePoStatus(activeToken, poId, nextStatus);
+      setPurchaseOrders((prev) =>
+        prev.map((po) => (po.id === poId ? { ...po, status: nextStatus } : po)),
+      );
+      appendAudit({
+        entityType: 'PurchaseOrder',
+        entityId: poId,
+        action: `PO_STATUS_${nextStatus}`,
+        actorRole: activeRole,
+        reason: `Status PO diperbarui menjadi ${nextStatus}.`,
+      });
+      showToast(`Status PO diperbarui menjadi ${nextStatus}`);
+    },
+    [activeRole, activeToken, appendAudit, showToast],
+  );
+
+  const toggleWh04Offline = useCallback(
+    (warehouseCode = 'WH-04') => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        showToast('Operasi jaringan gudang hanya untuk Operator Gudang');
+        return;
+      }
+      const target = warehouses.find((w) => w.warehouseCode === warehouseCode);
+      const nextOffline = target ? target.networkStatus === 'ONLINE' : !wh04Offline;
+      if (warehouseCode === 'WH-04') {
+        setWh04Offline(nextOffline);
+      }
       setWarehouses((prev) =>
         prev.map((w) =>
-          w.warehouseCode === 'WH-04'
-            ? {
-                ...w,
-                rfidQty: w.rfidQty + deltaQty,
-                physicalQty: w.physicalQty + deltaQty,
-              }
+          w.warehouseCode === warehouseCode
+            ? { ...w, networkStatus: nextOffline ? 'OFFLINE' : 'ONLINE', offlineHours: nextOffline ? 48 : 0 }
             : w,
         ),
       );
+      appendAudit({
+        entityType: 'Warehouse',
+        entityId: warehouseCode,
+        action: nextOffline ? 'WAREHOUSE_OFFLINE_48H' : 'WAREHOUSE_ONLINE_RESTORED',
+        actorRole: activeRole,
+        reason: nextOffline
+          ? `${warehouseCode} terputus jaringan; mode Store-and-Forward IndexedDB aktif.`
+          : `Koneksi ${warehouseCode} pulih; siap sinkronisasi antrean lokal.`,
+      });
+      showToast(nextOffline ? `${warehouseCode} masuk mode offline (48 jam)` : `${warehouseCode} kembali online`);
+    },
+    [activeRole, appendAudit, showToast, warehouses, wh04Offline],
+  );
 
-      if (wh04Offline) {
+  const scanWh04Rfid = useCallback(
+    async (deltaQty = 10, direction: 'IN' | 'OUT' | 'CYCLE_COUNT' = 'IN', warehouseCode = 'WH-04') => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        showToast('Pemindaian RFID hanya dapat dilakukan oleh Operator Gudang');
+        return;
+      }
+      const targetWh = warehouses.find((w) => w.warehouseCode === warehouseCode) ?? warehouses[0]!;
+      const isOffline = targetWh.networkStatus === 'OFFLINE';
+      const key = createIdempotencyKey(warehouseCode);
+      const scan: QueuedRfidScan = {
+        idempotencyKey: key,
+        stockId: targetWh.stockId,
+        warehouseCode,
+        deltaQty,
+        direction,
+        offlineTimestamp: new Date().toISOString(),
+        wasOffline: isOffline,
+      };
+
+      setWarehouses((prev) =>
+        prev.map((w) => {
+          if (w.warehouseCode !== warehouseCode) return w;
+          if (direction === 'IN') {
+            return { ...w, rfidQty: w.rfidQty + deltaQty, physicalQty: w.physicalQty + deltaQty };
+          }
+          if (direction === 'OUT') {
+            return {
+              ...w,
+              rfidQty: Math.max(0, w.rfidQty - deltaQty),
+              physicalQty: Math.max(0, w.physicalQty - deltaQty),
+            };
+          }
+          return { ...w, physicalQty: deltaQty };
+        }),
+      );
+
+      if (isOffline) {
         await enqueueOfflineScan(scan);
         const updatedQueue = await listQueuedScans();
         setOfflineQueue(updatedQueue);
         appendAudit({
           entityType: 'RfidSyncLog',
-          entityId: 'WH-04',
+          entityId: warehouseCode,
           action: 'OFFLINE_SCAN_QUEUED',
-          actorRole: role,
+          actorRole: activeRole,
           idempotencyKey: key,
-          reason: `Pindai +${deltaQty} unit disimpan ke IndexedDB lokal (offline).`,
+          reason: `Pindai ${direction} ${deltaQty} unit (${warehouseCode}) disimpan ke IndexedDB.`,
         });
-        showToast(`Pindai +${deltaQty} unit disimpan ke antrean IndexedDB`);
+        showToast(`Pindai ${direction} ${deltaQty} unit (${warehouseCode}) masuk antrean IndexedDB`);
       } else {
-        await smartChainApi.syncWmsBatch(role, [scan]);
+        await smartChainApi.syncWmsBatch(activeToken, [scan]);
+        setLastSyncedBatch([scan]);
         appendAudit({
           entityType: 'RfidSyncLog',
-          entityId: 'WH-04',
+          entityId: warehouseCode,
           action: 'ONLINE_SCAN_SYNCED',
-          actorRole: role,
+          actorRole: activeRole,
           idempotencyKey: key,
-          reason: `Pindai +${deltaQty} unit tersinkron langsung ke pusat.`,
+          reason: `Pindai ${direction} ${deltaQty} unit (${warehouseCode}) tersinkron langsung.`,
         });
-        showToast(`Pemindaian RFID +${deltaQty} unit tersinkron langsung`);
+        showToast(`Pemindaian ${direction} ${deltaQty} unit (${warehouseCode}) tersinkron`);
       }
     },
-    [appendAudit, role, showToast, wh04Offline],
+    [activeRole, activeToken, appendAudit, showToast, warehouses],
   );
 
-  const syncOfflineQueue = useCallback(async () => {
-    if (wh04Offline) {
-      showToast('Pulihkan koneksi Gudang #04 terlebih dahulu sebelum sinkronisasi');
-      return;
-    }
-    const pending = await listQueuedScans();
-    if (pending.length === 0) {
-      showToast('Tidak ada transaksi pada antrean lokal IndexedDB');
-      return;
-    }
+  const syncOfflineQueue = useCallback(
+    async (warehouseCode = 'WH-04') => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        showToast('Sinkronisasi batch hanya untuk Operator Gudang');
+        return;
+      }
+      const targetWh = warehouses.find((w) => w.warehouseCode === warehouseCode);
+      if (targetWh?.networkStatus === 'OFFLINE') {
+        showToast(`Pulihkan koneksi ${warehouseCode} terlebih dahulu sebelum sinkronisasi`);
+        return;
+      }
+      const pending = await listQueuedScans();
+      const matching = pending.filter((p) => p.warehouseCode === warehouseCode);
+      const batch = matching.length > 0 ? matching : pending;
+      if (batch.length === 0) {
+        showToast('Tidak ada transaksi pada antrean lokal IndexedDB');
+        return;
+      }
 
-    await smartChainApi.syncWmsBatch(role, pending);
-    await clearQueuedScans(pending.map((item) => item.idempotencyKey));
-    setOfflineQueue([]);
+      await smartChainApi.syncWmsBatch(activeToken, batch);
+      setLastSyncedBatch(batch);
+      await clearQueuedScans(batch.map((item) => item.idempotencyKey));
+      setOfflineQueue(await listQueuedScans());
+      appendAudit({
+        entityType: 'RfidSyncLog',
+        entityId: warehouseCode,
+        action: 'WMS_BATCH_SYNC_COMPLETED',
+        actorRole: activeRole,
+        reason: `${batch.length} transaksi antrean IndexedDB disinkronkan tanpa duplikasi.`,
+      });
+      showToast(`${batch.length} transaksi offline berhasil disinkronkan`);
+    },
+    [activeRole, activeToken, appendAudit, showToast, warehouses],
+  );
+
+  const replayLastBatchIdempotency = useCallback(async () => {
+    if (lastSyncedBatch.length === 0) {
+      showToast('Belum ada batch yang disinkronkan untuk diuji ulang idempotency-nya');
+      return;
+    }
+    await smartChainApi.syncWmsBatch(activeToken, lastSyncedBatch);
     appendAudit({
       entityType: 'RfidSyncLog',
-      entityId: 'WH-04',
-      action: 'WMS_BATCH_SYNC_COMPLETED',
-      actorRole: role,
-      reason: `${pending.length} transaksi antrean IndexedDB disinkronkan tanpa duplikasi.`,
+      entityId: lastSyncedBatch[0]?.warehouseCode ?? 'WH-04',
+      action: 'IDEMPOTENCY_DUPLICATE_SKIPPED',
+      actorRole: activeRole,
+      idempotencyKey: lastSyncedBatch[0]?.idempotencyKey,
+      reason: `Uji kirim ulang ${lastSyncedBatch.length} kunci idempoten ditolak tanpa mutasi stok ganda.`,
     });
-    showToast(`${pending.length} transaksi offline berhasil disinkronkan`);
-  }, [appendAudit, role, showToast, wh04Offline]);
+    showToast(`Idempotency check lolos: ${lastSyncedBatch.length} duplikat diabaikan (0 mutasi ganda)`);
+  }, [activeRole, activeToken, appendAudit, lastSyncedBatch, showToast]);
 
-  const reconcileWh04 = useCallback(async () => {
-    const wh04 = warehouses.find((w) => w.warehouseCode === 'WH-04');
-    if (!wh04) return;
-    const discrepancy = Math.abs(wh04.rfidQty - wh04.physicalQty);
-    if (discrepancy === 0) {
-      showToast('Stok RFID dan fisik Gudang #04 sudah seimbang (0 selisih)');
-      return;
-    }
+  const reconcileWh04 = useCallback(
+    async (warehouseCode = 'WH-04') => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        showToast('Rekonsiliasi cycle count hanya untuk Operator Gudang');
+        return;
+      }
+      const targetWh = warehouses.find((w) => w.warehouseCode === warehouseCode);
+      if (!targetWh) return;
+      const discrepancy = Math.abs(targetWh.rfidQty - targetWh.physicalQty);
+      if (discrepancy === 0) {
+        showToast(`Stok RFID dan fisik ${warehouseCode} sudah seimbang (0 selisih)`);
+        return;
+      }
 
-    await smartChainApi.reconcileWmsStock(role, wh04.stockId);
-    setWarehouses((prev) =>
-      prev.map((w) =>
-        w.warehouseCode === 'WH-04'
-          ? {
-              ...w,
-              quarantineQty: w.quarantineQty + discrepancy,
-              rfidQty: w.physicalQty,
-            }
-          : w,
-      ),
-    );
-    setReconciled(true);
-    appendAudit({
-      entityType: 'InventoryStock',
-      entityId: wh04.stockId,
-      action: 'WMS_CYCLE_COUNT_RECONCILED',
-      actorRole: role,
-      reason: `Rekonsiliasi selesai: ${discrepancy} unit selisih dipindah ke karantina.`,
-    });
-    showToast(`${discrepancy} unit selisih berhasil dikarantina dan dicatat di audit log`);
-  }, [appendAudit, role, showToast, warehouses]);
+      await smartChainApi.reconcileWmsStock(activeToken, targetWh.stockId);
+      setWarehouses((prev) =>
+        prev.map((w) =>
+          w.warehouseCode === warehouseCode
+            ? { ...w, quarantineQty: w.quarantineQty + discrepancy, rfidQty: w.physicalQty }
+            : w,
+        ),
+      );
+      if (warehouseCode === 'WH-04') setReconciled(true);
+      appendAudit({
+        entityType: 'InventoryStock',
+        entityId: targetWh.stockId,
+        action: 'WMS_CYCLE_COUNT_RECONCILED',
+        actorRole: activeRole,
+        reason: `Rekonsiliasi ${warehouseCode}: ${discrepancy} unit selisih dipindah ke karantina.`,
+      });
+      showToast(`${discrepancy} unit selisih (${warehouseCode}) dikarantina dan diaudit`);
+    },
+    [activeRole, activeToken, appendAudit, showToast, warehouses],
+  );
 
   const toggleAnomalyFilter = useCallback(async () => {
+    if (activeRole !== 'LOGISTICS_MANAGER') {
+      showToast('Filter Anomaly Guard dikelola oleh Manajer Distribusi & Logistik');
+      return;
+    }
     const nextFilter = !anomalyFilterActive;
     setAnomalyFilterActive(nextFilter);
     if (nextFilter) {
-      await smartChainApi.validateOrder(role, 'ORD-882');
+      await smartChainApi.validateOrder(activeToken, { orderIdOrNumber: 'ORD-882' });
     }
     setSalesOrders((prev) =>
       prev.map((o) => {
@@ -360,25 +599,171 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
       entityType: 'SalesOrder',
       entityId: 'ORD-882',
       action: nextFilter ? 'ORDER_ANOMALY_GUARD_ENABLED' : 'ORDER_ANOMALY_GUARD_RESET',
-      actorRole: role,
+      actorRole: activeRole,
       reason: nextFilter
         ? 'Filter anomali aktif: pesanan fiktif >150% kuota ditahan sebelum penguncian stok.'
         : 'Simulasi filter anomali dikembalikan ke antrean manual.',
     });
     showToast(nextFilter ? 'Filter Anomaly Guard aktif: pesanan fiktif ditahan' : 'Filter Anomaly Guard dimatikan');
-  }, [anomalyFilterActive, appendAudit, role, showToast]);
+  }, [activeRole, activeToken, anomalyFilterActive, appendAudit, showToast]);
+
+  const verifyAndApproveOrder = useCallback(
+    async (orderId: string) => {
+      if (activeRole !== 'LOGISTICS_MANAGER') {
+        showToast('Hanya Manajer Logistik yang dapat memverifikasi deposit & meloloskan order');
+        return;
+      }
+      const target = salesOrders.find((o) => o.id === orderId);
+      if (!target) return;
+
+      await smartChainApi.validateOrder(activeToken, {
+        orderIdOrNumber: target.orderNumber,
+        depositConfirmed: true,
+      });
+
+      setSalesOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                depositConfirmed: true,
+                anomalyFlag: false,
+                anomalyReason: null,
+                allocatedQty: o.requestedQty,
+                allocationStatus: 'APPROVED_SLA',
+              }
+            : o,
+        ),
+      );
+      appendAudit({
+        entityType: 'SalesOrder',
+        entityId: target.orderNumber,
+        action: 'ORDER_DEPOSIT_VERIFIED_APPROVED',
+        actorRole: activeRole,
+        reason: `Deposit ${target.orderNumber} terverifikasi; alokasi ${target.requestedQty} unit disetujui.`,
+      });
+      showToast(`${target.orderNumber} terverifikasi deposit dan diloloskan`);
+    },
+    [activeRole, activeToken, appendAudit, salesOrders, showToast],
+  );
+
+  const rejectOrder = useCallback(
+    (orderId: string) => {
+      if (activeRole !== 'LOGISTICS_MANAGER') {
+        showToast('Penahanan permanen order dikelola oleh Manajer Logistik');
+        return;
+      }
+      const target = salesOrders.find((o) => o.id === orderId);
+      if (!target) return;
+      setSalesOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                anomalyFlag: true,
+                allocatedQty: 0,
+                allocationStatus: 'HELD_ANOMALY',
+                anomalyReason: 'Ditolak permanen oleh Manajer Logistik (indikasi pesanan fiktif).',
+              }
+            : o,
+        ),
+      );
+      appendAudit({
+        entityType: 'SalesOrder',
+        entityId: target.orderNumber,
+        action: 'ORDER_REJECTED_ANOMALY',
+        actorRole: activeRole,
+        reason: `${target.orderNumber} ditolak permanen untuk melindungi alokasi stok.`,
+      });
+      showToast(`${target.orderNumber} ditahan permanen`);
+    },
+    [activeRole, appendAudit, salesOrders, showToast],
+  );
+
+  const runSlaSurgeAllocation = useCallback(
+    async (availableStockOverride = 280) => {
+      if (activeRole !== 'LOGISTICS_MANAGER') {
+        showToast('Alokasi prioritas SLA dikelola oleh Manajer Distribusi & Logistik');
+        return;
+      }
+      await smartChainApi.allocateSurge(activeToken, 'mat-1', availableStockOverride);
+
+      let remaining = availableStockOverride;
+      const tierRank: Record<SalesOrderDto['slaTier'], number> = {
+        TIER_1: 300,
+        TIER_2: 200,
+        TIER_3: 100,
+      };
+      const sortedIds = [...salesOrders]
+        .sort((a, b) => tierRank[b.slaTier] + b.slaScore - (tierRank[a.slaTier] + a.slaScore))
+        .map((o) => o.id);
+
+      const updates = new Map<string, { allocatedQty: number; status: string; anomalyFlag: boolean }>();
+      for (const id of sortedIds) {
+        const ord = salesOrders.find((o) => o.id === id)!;
+        const isAnomaly = ord.requestedQty > ord.monthlyQuota * 1.5 && !ord.depositConfirmed;
+        if (isAnomaly) {
+          updates.set(id, { allocatedQty: 0, status: 'HELD_ANOMALY', anomalyFlag: true });
+          continue;
+        }
+        const alloc = Math.min(ord.requestedQty, remaining);
+        remaining -= alloc;
+        updates.set(id, {
+          allocatedQty: alloc,
+          status: alloc === ord.requestedQty && alloc > 0 ? 'APPROVED_SLA' : alloc > 0 ? 'PARTIAL_ALLOCATED' : 'PENDING',
+          anomalyFlag: false,
+        });
+      }
+
+      setSalesOrders((prev) =>
+        prev.map((o) => {
+          const next = updates.get(o.id);
+          return next
+            ? { ...o, allocatedQty: next.allocatedQty, allocationStatus: next.status, anomalyFlag: next.anomalyFlag }
+            : o;
+        }),
+      );
+      setAnomalyFilterActive(true);
+      appendAudit({
+        entityType: 'SalesOrderBatch',
+        entityId: 'SURGE-300',
+        action: 'ORDER_SURGE_SLA_ALLOCATED',
+        actorRole: activeRole,
+        reason: `Alokasi SLA dijalankan pada stok terbatas (${availableStockOverride} unit); sisa ${remaining} unit.`,
+      });
+      showToast(`Alokasi prioritas SLA selesai (stok tersedia ${availableStockOverride} unit)`);
+    },
+    [activeRole, activeToken, appendAudit, salesOrders, showToast],
+  );
 
   const submitOrderValidation = useCallback(
-    (distributorCode: string, requestedQty: number, depositConfirmed: boolean) => {
-      const template = salesOrders.find((o) => o.distributorCode === distributorCode) ?? salesOrders[0]!;
+    async (distributorCode: string, requestedQty: number, depositConfirmed: boolean) => {
+      if (activeRole !== 'LOGISTICS_MANAGER' && activeRole !== 'PARTNER') {
+        showToast('Pengajuan atau validasi order hanya untuk Manajer Logistik atau Mitra Distributor');
+        return;
+      }
+      const scopedCode =
+        activeRole === 'PARTNER' && session?.user.entityCode
+          ? session.user.entityCode
+          : distributorCode;
+
+      await smartChainApi.validateOrder(activeToken, {
+        distributorIdOrCode: scopedCode,
+        materialIdOrSku: 'MAT-01',
+        requestedQty,
+        depositConfirmed,
+      });
+
+      const template = salesOrders.find((o) => o.distributorCode === scopedCode) ?? salesOrders[0]!;
       const isAnomaly = requestedQty > template.monthlyQuota * 1.5 && !depositConfirmed;
       const orderNo = `ORD-${Date.now().toString().slice(-3)}`;
 
       const created: SalesOrderDto = {
         id: `ord-${Date.now()}`,
         orderNumber: orderNo,
-        distributorCode: template.distributorCode,
-        distributorName: template.distributorName,
+        distributorCode: scopedCode,
+        distributorName:
+          activeRole === 'PARTNER' && session?.user.name ? session.user.name : template.distributorName,
         routeGroup: template.routeGroup,
         slaTier: template.slaTier,
         slaScore: template.slaScore,
@@ -399,7 +784,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         entityType: 'SalesOrder',
         entityId: orderNo,
         action: isAnomaly ? 'ORDER_HELD_ANOMALY_GUARD' : 'ORDER_APPROVED_SLA',
-        actorRole: role,
+        actorRole: activeRole,
         reason: isAnomaly
           ? `${orderNo} ditahan oleh Anomaly Guard (${requestedQty} vs kuota ${template.monthlyQuota}).`
           : `${orderNo} lolos SLA ${template.slaTier} dan dialokasikan.`,
@@ -410,12 +795,16 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
           : `${orderNo} lolos validasi SLA dan dialokasikan`,
       );
     },
-    [appendAudit, role, salesOrders, showToast],
+    [activeRole, activeToken, appendAudit, salesOrders, session?.user.entityCode, session?.user.name, showToast],
   );
 
   const consolidateTmsRoutes = useCallback(async () => {
+    if (activeRole !== 'LOGISTICS_MANAGER') {
+      showToast('Konsolidasi rute TMS dikelola oleh Manajer Distribusi & Logistik');
+      return;
+    }
     const surgePct = stressMode ? 40 : 0;
-    await smartChainApi.consolidateTms(role, surgePct);
+    await smartChainApi.consolidateTms(activeToken, surgePct);
     setShipments((prev) =>
       prev.map((s) => {
         const effectiveBase = Math.round(s.baseCost * (1 + surgePct / 100));
@@ -434,19 +823,141 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
       entityType: 'ShipmentBatch',
       entityId: 'ALL_ROUTES',
       action: 'TMS_ROUTES_CONSOLIDATED',
-      actorRole: role,
+      actorRole: activeRole,
       reason: 'Konsolidasi muatan searah (JAWA_BARAT & JAWA_TIMUR) menekan biaya kirim 28%.',
     });
     showToast('Rute TMS berhasil dikonsolidasikan (hemat 28% biaya kirim)');
-  }, [appendAudit, role, showToast, stressMode]);
+  }, [activeRole, activeToken, appendAudit, showToast, stressMode]);
+
+  const createManagedUser = useCallback(
+    async (input: {
+      email: string;
+      name: string;
+      role: SmartChainRole;
+      entityCode?: string;
+      password: string;
+    }): Promise<boolean> => {
+      if (activeRole !== 'SYSTEM_ADMIN') {
+        showToast('Hanya Admin Sistem IT yang berhak membuat akun pengguna');
+        return false;
+      }
+      const normalized = input.email.trim().toLowerCase();
+      if (managedUsers.some((u) => u.email.toLowerCase() === normalized)) {
+        showToast(`Email ${normalized} sudah terdaftar`);
+        return false;
+      }
+
+      const apiRes = await smartChainApi.createAdminUser(activeToken, {
+        ...input,
+        email: normalized,
+      });
+      if (!apiRes.ok && session?.authMode === 'jwt-api') {
+        showToast(apiRes.message);
+        return false;
+      }
+
+      const created: ManagedUserDto = apiRes.ok
+        ? apiRes.data.user
+        : {
+            id: `usr-${Date.now()}`,
+            email: normalized,
+            name: input.name.trim(),
+            role: input.role,
+            entityCode: input.role === 'PARTNER' ? input.entityCode?.trim() ?? null : null,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+          };
+      setManagedUsers((prev) => [...prev, created]);
+      appendAudit({
+        entityType: 'UserAccount',
+        entityId: created.id,
+        action: 'USER_ACCOUNT_CREATED',
+        actorRole: activeRole,
+        reason: `Akun ${created.email} dibuat dengan peran ${created.role}.`,
+      });
+      showToast(`Akun ${created.email} berhasil dibuat`);
+      return true;
+    },
+    [activeRole, activeToken, appendAudit, managedUsers, session?.authMode, showToast],
+  );
+
+  const updateManagedUserAccess = useCallback(
+    async (userId: string, patch: { role?: SmartChainRole; isActive?: boolean }) => {
+      if (activeRole !== 'SYSTEM_ADMIN') {
+        showToast('Hanya Admin Sistem IT yang dapat mengubah akses pengguna');
+        return;
+      }
+      const target = managedUsers.find((u) => u.id === userId);
+      if (!target) return;
+      if (target.email === session?.user.email && patch.isActive === false) {
+        showToast('Admin Sistem tidak dapat menonaktifkan akunnya sendiri');
+        return;
+      }
+
+      const apiRes = await smartChainApi.updateAdminUserAccess(activeToken, userId, patch);
+      if (!apiRes.ok && session?.authMode === 'jwt-api') {
+        showToast(apiRes.message);
+        return;
+      }
+
+      setManagedUsers((prev) =>
+        prev.map((u) =>
+          u.id === userId
+            ? {
+                ...u,
+                role: patch.role ?? u.role,
+                isActive: patch.isActive ?? u.isActive,
+              }
+            : u,
+        ),
+      );
+      appendAudit({
+        entityType: 'UserAccount',
+        entityId: userId,
+        action: 'USER_ACCESS_UPDATED',
+        actorRole: activeRole,
+        reason: `Akses ${target.email} diperbarui (${patch.role ?? target.role}, aktif=${String(patch.isActive ?? target.isActive)}).`,
+      });
+      showToast(`Akses untuk ${target.email} berhasil diperbarui`);
+    },
+    [activeRole, activeToken, appendAudit, managedUsers, session?.authMode, session?.user.email, showToast],
+  );
+
+  const resetManagedUserPassword = useCallback(
+    async (userId: string, newPassword: string) => {
+      if (activeRole !== 'SYSTEM_ADMIN') {
+        showToast('Hanya Admin Sistem IT yang dapat mereset kata sandi');
+        return;
+      }
+      const target = managedUsers.find((u) => u.id === userId);
+      if (!target) return;
+
+      const apiRes = await smartChainApi.resetAdminUserPassword(activeToken, userId, newPassword);
+      if (!apiRes.ok && session?.authMode === 'jwt-api') {
+        showToast(apiRes.message);
+        return;
+      }
+      appendAudit({
+        entityType: 'UserAccount',
+        entityId: userId,
+        action: 'USER_PASSWORD_RESET',
+        actorRole: activeRole,
+        reason: `Kata sandi ${target.email} telah direset oleh Admin Sistem.`,
+      });
+      showToast(`Kata sandi untuk ${target.email} berhasil direset`);
+    },
+    [activeRole, activeToken, appendAudit, managedUsers, session?.authMode, showToast],
+  );
 
   return (
     <SmartChainContext.Provider
       value={{
+        session,
+        authReady,
+        login,
+        logout,
         stressMode,
         setStressMode,
-        role,
-        setRole,
         suppliers,
         purchaseOrders,
         warehouses,
@@ -454,21 +965,33 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         shipments,
         forecasts,
         auditLogs,
+        managedUsers,
         offlineQueue,
+        lastSyncedBatch,
         rfqTriggered,
         wh04Offline,
         reconciled,
         anomalyFilterActive,
         tmsConsolidated,
         showToast,
+        toggleSupplierHalt,
         triggerRfqFallback,
+        createPurchaseOrder,
+        updatePoStatus,
         toggleWh04Offline,
         scanWh04Rfid,
         syncOfflineQueue,
+        replayLastBatchIdempotency,
         reconcileWh04,
         toggleAnomalyFilter,
+        verifyAndApproveOrder,
+        rejectOrder,
+        runSlaSurgeAllocation,
         submitOrderValidation,
         consolidateTmsRoutes,
+        createManagedUser,
+        updateManagedUserAccess,
+        resetManagedUserPassword,
       }}
     >
       {children}

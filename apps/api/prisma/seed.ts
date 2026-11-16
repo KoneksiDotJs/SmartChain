@@ -22,7 +22,7 @@ async function main() {
   await prisma.factory.deleteMany();
   await prisma.userAccount.deleteMany();
 
-  // 1. User Accounts (5 RBAC Roles)
+  // 1. Base User Accounts (Internal RBAC Roles)
   const defaultHash = hashPassword('smartchain123');
   await prisma.userAccount.createMany({
     data: [
@@ -51,10 +51,9 @@ async function main() {
         passwordHash: defaultHash,
       },
       {
-        email: 'mitra@bajanusantara.co.id',
-        name: 'PT Baja Nusantara (Mitra Eksternal)',
-        role: 'PARTNER',
-        entityCode: 'SUP-01',
+        email: 'admin@nusantara-mfg.co.id',
+        name: 'Irwan Hakim (Admin Sistem IT)',
+        role: 'SYSTEM_ADMIN',
         passwordHash: defaultHash,
       },
     ],
@@ -276,6 +275,34 @@ async function main() {
     });
     distributors.push(dist);
   }
+
+  // Provision PARTNER portal accounts for ALL 20 suppliers and ALL 25 distributors
+  await prisma.userAccount.createMany({
+    data: [
+      ...suppliers.map((sup) => ({
+        email:
+          sup.code === 'SUP-01'
+            ? 'mitra@bajanusantara.co.id'
+            : `${sup.code.toLowerCase()}@mitra.nusantara-mfg.co.id`,
+        name: `${sup.name} (${sup.tierType === 'BACKUP' ? 'Cadangan' : 'Pemasok'})`,
+        role: 'PARTNER' as const,
+        entityCode: sup.code,
+        passwordHash: defaultHash,
+      })),
+      ...distributors.map((dist) => ({
+        email:
+          dist.code === 'DIST-01'
+            ? 'order@distribusitimur.co.id'
+            : dist.code === 'DIST-02'
+              ? 'order@sentosajaya.co.id'
+              : `${dist.code.toLowerCase()}@mitra.nusantara-mfg.co.id`,
+        name: `${dist.name} (Distributor)`,
+        role: 'PARTNER' as const,
+        entityCode: dist.code,
+        passwordHash: defaultHash,
+      })),
+    ],
+  });
 
   // 7. Initial Purchase Orders
   await prisma.purchaseOrder.create({

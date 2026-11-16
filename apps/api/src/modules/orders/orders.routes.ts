@@ -24,7 +24,7 @@ export function createOrdersRouter(prisma: PrismaClient): Router {
   router.post(
     '/validate',
     requireAuth,
-    requireRoles('LOGISTICS_MANAGER', 'DIREKSI', 'PARTNER'),
+    requireRoles('LOGISTICS_MANAGER', 'PARTNER'),
     anomalyGuardMiddleware,
     (req, res, next) => controller.validateOrder(req, res, next),
   );
@@ -32,7 +32,7 @@ export function createOrdersRouter(prisma: PrismaClient): Router {
   router.post(
     '/allocate-surge',
     requireAuth,
-    requireRoles('LOGISTICS_MANAGER', 'DIREKSI'),
+    requireRoles('LOGISTICS_MANAGER'),
     anomalyGuardMiddleware,
     (req, res, next) => controller.allocateSurge(req, res, next),
   );

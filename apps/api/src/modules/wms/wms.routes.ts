@@ -23,21 +23,21 @@ export function createWmsRouter(prisma: PrismaClient): Router {
   router.patch(
     '/warehouses/:id/network',
     requireAuth,
-    requireRoles('WAREHOUSE_OPERATOR', 'DIREKSI'),
+    requireRoles('WAREHOUSE_OPERATOR'),
     (req, res, next) => controller.setNetworkStatus(req, res, next),
   );
 
   router.post(
     '/sync-batch',
     requireAuth,
-    requireRoles('WAREHOUSE_OPERATOR', 'DIREKSI'),
+    requireRoles('WAREHOUSE_OPERATOR'),
     (req, res, next) => controller.syncBatch(req, res, next),
   );
 
   router.post(
     '/reconcile',
     requireAuth,
-    requireRoles('WAREHOUSE_OPERATOR', 'DIREKSI'),
+    requireRoles('WAREHOUSE_OPERATOR'),
     (req, res, next) => controller.reconcile(req, res, next),
   );
 

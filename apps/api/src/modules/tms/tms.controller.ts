@@ -15,7 +15,9 @@ export function createTmsController(service: ReturnType<typeof createTmsService>
       try {
         const routeGroup =
           typeof req.query.routeGroup === 'string' ? req.query.routeGroup : undefined;
-        const shipments = await service.listShipments(routeGroup);
+        const partnerDistScope =
+          req.user?.role === 'PARTNER' ? req.user.entityCode : undefined;
+        const shipments = await service.listShipments(routeGroup, partnerDistScope);
         sendSuccess(res, { shipments });
       } catch (err) {
         next(err);

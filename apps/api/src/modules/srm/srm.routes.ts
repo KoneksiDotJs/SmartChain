@@ -23,14 +23,14 @@ export function createSrmRouter(prisma: PrismaClient): Router {
   router.patch(
     '/suppliers/:id/status',
     requireAuth,
-    requireRoles('PROCUREMENT_MANAGER', 'DIREKSI'),
+    requireRoles('PROCUREMENT_MANAGER'),
     (req, res, next) => controller.updateStatus(req, res, next),
   );
 
   router.post(
     '/rfq-fallback',
     requireAuth,
-    requireRoles('PROCUREMENT_MANAGER', 'DIREKSI'),
+    requireRoles('PROCUREMENT_MANAGER'),
     (req, res, next) => controller.triggerFallback(req, res, next),
   );
 

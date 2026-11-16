@@ -23,7 +23,7 @@ export function createTmsRouter(prisma: PrismaClient): Router {
   router.post(
     '/consolidate',
     requireAuth,
-    requireRoles('LOGISTICS_MANAGER', 'DIREKSI'),
+    requireRoles('LOGISTICS_MANAGER'),
     (req, res, next) => controller.consolidate(req, res, next),
   );
 

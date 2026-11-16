@@ -1,9 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
 import React from 'react';
-import { HeroBand } from '@/components/layout/HeroBand';
-import { KpiGrid } from '@/components/layout/KpiGrid';
-import { Topbar } from '@/components/layout/Topbar';
+import { RoleGate } from '@/components/auth/RoleGate';
 import { SmartChainProvider } from '@/hooks/useSmartChainMode';
 import './globals.css';
 
@@ -39,12 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         <SmartChainProvider>
-          <Topbar />
-          <HeroBand />
-          <main className="sc-container" style={{ paddingTop: 24, paddingBottom: 48 }}>
-            <KpiGrid />
-            {children}
-          </main>
+          <RoleGate>{children}</RoleGate>
         </SmartChainProvider>
       </body>
     </html>

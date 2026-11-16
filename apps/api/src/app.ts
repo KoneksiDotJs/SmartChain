@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
@@ -12,6 +14,7 @@ import { createOrdersRouter } from './modules/orders/orders.routes.js';
 import { createPoRouter } from './modules/po/po.routes.js';
 import { createSrmRouter } from './modules/srm/srm.routes.js';
 import { createTmsRouter } from './modules/tms/tms.routes.js';
+import { createUsersRouter } from './modules/users/users.routes.js';
 import { createWmsRouter } from './modules/wms/wms.routes.js';
 
 export function createApp(prisma: PrismaClient): Express {
@@ -35,6 +38,23 @@ export function createApp(prisma: PrismaClient): Express {
     });
   });
 
+  app.get('/api/openapi.yaml', (_req, res) => {
+    const candidates = [
+      path.resolve(process.cwd(), 'docs/openapi.yaml'),
+      path.resolve(process.cwd(), '../../docs/openapi.yaml'),
+    ];
+    const specPath = candidates.find((p) => fs.existsSync(p));
+    if (!specPath) {
+      res.status(404).json({
+        success: false,
+        data: null,
+        error: { code: 'OPENAPI_NOT_FOUND', message: 'Berkas OpenAPI tidak ditemukan' },
+      });
+      return;
+    }
+    res.type('application/yaml').send(fs.readFileSync(specPath, 'utf8'));
+  });
+
   app.use('/api/auth', createAuthRouter(prisma));
   app.use('/api/dashboard', createDashboardRouter(prisma));
   app.use('/api/srm', createSrmRouter(prisma));
@@ -43,6 +63,7 @@ export function createApp(prisma: PrismaClient): Express {
   app.use('/api/orders', createOrdersRouter(prisma));
   app.use('/api/tms', createTmsRouter(prisma));
   app.use('/api/analytics', createAnalyticsRouter(prisma));
+  app.use('/api/admin/users', createUsersRouter(prisma));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

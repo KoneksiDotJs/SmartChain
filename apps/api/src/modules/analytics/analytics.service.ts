@@ -3,6 +3,7 @@ import {
   calculateSafetyStock,
   computeHybridWmaForecast,
   type DataQualityStatus,
+  type DemandPoint,
   type HybridWmaResult,
 } from './analytics.domain.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
@@ -19,6 +20,7 @@ export interface MaterialForecastItem {
   reorderPoint: number;
   needsProcurement: boolean;
   recommendedOrderQty: number;
+  historySeries: DemandPoint[];
   forecast: HybridWmaResult;
 }
 
@@ -72,6 +74,7 @@ export function createAnalyticsService(repo: AnalyticsRepository) {
           reorderPoint,
           needsProcurement,
           recommendedOrderQty,
+          historySeries: row.demandHistory,
           forecast,
         };
       });

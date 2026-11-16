@@ -8,8 +8,11 @@ import type { TmsRepository } from './tms.repository.js';
 
 export function createTmsService(repo: TmsRepository, audit: AuditWriter) {
   return {
-    async listShipments(routeGroupFilter?: string): Promise<ShipmentCandidate[]> {
-      return repo.listShipments(routeGroupFilter);
+    async listShipments(
+      routeGroupFilter?: string,
+      distributorCodeFilter?: string,
+    ): Promise<ShipmentCandidate[]> {
+      return repo.listShipments(routeGroupFilter, distributorCodeFilter);
     },
 
     async consolidateRoutes(

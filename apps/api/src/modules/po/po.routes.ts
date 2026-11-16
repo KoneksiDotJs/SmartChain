@@ -23,14 +23,14 @@ export function createPoRouter(prisma: PrismaClient): Router {
   router.post(
     '/',
     requireAuth,
-    requireRoles('PROCUREMENT_MANAGER', 'DIREKSI'),
+    requireRoles('PROCUREMENT_MANAGER'),
     (req, res, next) => controller.createOrder(req, res, next),
   );
 
   router.patch(
     '/:id/status',
     requireAuth,
-    requireRoles('PROCUREMENT_MANAGER', 'DIREKSI', 'PARTNER'),
+    requireRoles('PROCUREMENT_MANAGER', 'PARTNER'),
     (req, res, next) => controller.updateStatus(req, res, next),
   );
 

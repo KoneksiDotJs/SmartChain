@@ -1,0 +1,1005 @@
+openapi: 3.0.3
+info:
+  title: SmartChain Integrated Supply Chain Intelligence API
+  version: 1.0.0
+  description: |
+    Kontrak REST API resmi untuk platform **SmartChain** PT Nusantara Manufacturing
+    (3 pabrik, 15 pemasok utama + 5 cadangan Tier-2, 8 gudang, dan 25 distributor).
+
+    Seluruh respons API menggunakan amplop terstruktur `{ success, data, error }`.
+    Autentikasi menggunakan JWT Bearer Token dengan pembatasan **Role-Based Access Control (RBAC)**
+    dan prinsip *Separation of Duties* (peran `SYSTEM_ADMIN` hanya mengelola akun & akses,
+    tidak memiliki otoritas atas transaksi rantai pasok).
+
+servers:
+  - url: http://localhost:4000
+    description: Local Express Modular Monolith API
+
+tags:
+  - name: Health
+    description: Kesiapan layanan dan spesifikasi OpenAPI
+  - name: Auth
+    description: Autentikasi JWT dan daftar persona uji coba
+  - name: Dashboard & Audit
+    description: Ringkasan KPI eksekutif dan Immutable Audit Log (NFR-02)
+  - name: SRM
+    description: Supplier Relationship Management & Auto-RFQ Fallback (FR-01)
+  - name: Purchase Orders
+    description: Pengadaan dan persetujuan PO berbasis Reorder Point (FR-02)
+  - name: WMS & Offline Sync
+    description: Pemantauan stok RFID, sinkronisasi batch offline idempoten, & karantina selisih (FR-03, FR-04)
+  - name: Orders & Anomaly Guard
+    description: Validasi pesanan fiktif (>150% kuota / batas kredit) dan alokasi prioritas SLA (FR-05)
+  - name: TMS
+    description: Pelacakan pengiriman dan konsolidasi rute untuk menekan biaya transport +40% (FR-06)
+  - name: Business Analytics
+    description: Safety Stock dinamis, Reorder Point, dan Hybrid Weighted Moving Average (FR-07)
+  - name: System Admin
+    description: Manajemen akun pengguna & RBAC oleh SYSTEM_ADMIN (Separation of Duties)
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserRole:
+      type: string
+      enum:
+        - DIREKSI
+        - PROCUREMENT_MANAGER
+        - WAREHOUSE_OPERATOR
+        - LOGISTICS_MANAGER
+        - PARTNER
+        - SYSTEM_ADMIN
+
+    ApiErrorPayload:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: FORBIDDEN
+        message:
+          type: string
+          example: Peran SYSTEM_ADMIN tidak memiliki otorisasi untuk operasi ini
+        details:
+          nullable: true
+
+    EnvelopeError:
+      type: object
+      required: [success, data, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        data:
+          nullable: true
+          example: null
+        error:
+          $ref: '#/components/schemas/ApiErrorPayload'
+
+    AuthUser:
+      type: object
+      required: [id, email, name, role]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        entityCode:
+          type: string
+          nullable: true
+          example: SUP-01
+
+    Supplier:
+      type: object
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+          example: SUP-01
+        name:
+          type: string
+          example: PT Baja Nusantara
+        tierType:
+          type: string
+          enum: [MAIN, BACKUP]
+        slaScore:
+          type: number
+          example: 96
+        leadTimeDays:
+          type: integer
+          example: 4
+        status:
+          type: string
+          enum: [ACTIVE, HALTED, STANDBY]
+        haltedDays:
+          type: integer
+          example: 14
+        materialCategory:
+          type: string
+          example: LOGAM
+        city:
+          type: string
+          example: Cilegon
+
+    PurchaseOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        poNumber:
+          type: string
+          example: PO-2026-001
+        supplierCode:
+          type: string
+        supplierName:
+          type: string
+        materialSku:
+          type: string
+        materialName:
+          type: string
+        factoryName:
+          type: string
+        quantity:
+          type: integer
+        isRfqFallback:
+          type: boolean
+        triggeredByRop:
+          type: boolean
+        status:
+          type: string
+          enum: [DRAFT_RFQ, PENDING_APPROVAL, APPROVED, IN_TRANSIT, RECEIVED, CANCELLED]
+        expectedDate:
+          type: string
+          format: date-time
+        notes:
+          type: string
+          nullable: true
+
+    WarehouseStock:
+      type: object
+      properties:
+        stockId:
+          type: string
+        warehouseId:
+          type: string
+        warehouseCode:
+          type: string
+          example: WH-04
+        warehouseName:
+          type: string
+          example: Gudang #04 (Surabaya)
+        city:
+          type: string
+        networkStatus:
+          type: string
+          enum: [ONLINE, OFFLINE]
+        offlineHours:
+          type: integer
+        lastSyncAt:
+          type: string
+          format: date-time
+        materialId:
+          type: string
+        materialSku:
+          type: string
+        materialName:
+          type: string
+        rfidQty:
+          type: integer
+          example: 500
+        physicalQty:
+          type: integer
+          example: 320
+        quarantineQty:
+          type: integer
+          example: 180
+        rop:
+          type: integer
+        safetyStock:
+          type: integer
+
+    OfflineScanItem:
+      type: object
+      required: [idempotencyKey, stockId, deltaQty, direction, offlineTimestamp]
+      properties:
+        idempotencyKey:
+          type: string
+          minLength: 4
+          maxLength: 128
+          example: wh-04-1794816851-a1b2c3d4
+        stockId:
+          type: string
+        deltaQty:
+          type: integer
+          minimum: 1
+          example: 10
+        direction:
+          type: string
+          enum: [IN, OUT, CYCLE_COUNT]
+        offlineTimestamp:
+          type: string
+          format: date-time
+        wasOffline:
+          type: boolean
+
+    SalesOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        orderNumber:
+          type: string
+          example: ORD-882
+        distributorCode:
+          type: string
+          example: DIST-02
+        distributorName:
+          type: string
+        routeGroup:
+          type: string
+          example: JAWA_BARAT
+        slaTier:
+          type: string
+          enum: [TIER_1, TIER_2, TIER_3]
+        slaScore:
+          type: number
+        monthlyQuota:
+          type: integer
+          example: 150
+        requestedQty:
+          type: integer
+          example: 480
+        allocatedQty:
+          type: integer
+          example: 0
+        anomalyFlag:
+          type: boolean
+        anomalyReason:
+          type: string
+          nullable: true
+        allocationStatus:
+          type: string
+          enum: [PENDING, APPROVED_SLA, HELD_ANOMALY, PARTIAL_ALLOCATED, DISPATCHED]
+        depositConfirmed:
+          type: boolean
+
+    Shipment:
+      type: object
+      properties:
+        id:
+          type: string
+        shipmentNumber:
+          type: string
+          example: SHP-2026-01
+        orderNumber:
+          type: string
+        distributorName:
+          type: string
+        routeGroup:
+          type: string
+          example: JAWA_BARAT
+        carrierName:
+          type: string
+        baseCost:
+          type: integer
+          example: 5800000
+        consolidatedCost:
+          type: integer
+          example: 4176000
+        isConsolidated:
+          type: boolean
+        consolidationBatchId:
+          type: string
+          nullable: true
+        trackingStatus:
+          type: string
+          enum: [PLANNED, CONSOLIDATED, IN_TRANSIT, DELIVERED]
+
+    ForecastMaterial:
+      type: object
+      properties:
+        materialId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        unit:
+          type: string
+        currentStock:
+          type: integer
+        quarantineStock:
+          type: integer
+        leadTimeDays:
+          type: integer
+        dynamicSafetyStock:
+          type: integer
+        reorderPoint:
+          type: integer
+        needsProcurement:
+          type: boolean
+        recommendedOrderQty:
+          type: integer
+        historySeries:
+          type: array
+          items:
+            type: object
+            properties:
+              periodLabel:
+                type: string
+              periodIndex:
+                type: integer
+              observedQty:
+                type: integer
+                nullable: true
+              isMissing:
+                type: boolean
+        forecast:
+          type: object
+          properties:
+            forecastNextPeriod:
+              type: number
+            completenessPercent:
+              type: number
+              example: 66.7
+            validIntervals:
+              type: integer
+              example: 8
+            totalIntervals:
+              type: integer
+              example: 12
+            missingPeriods:
+              type: array
+              items:
+                type: string
+            qualityIndicator:
+              type: string
+              enum: [COMPLETE, INCOMPLETE_DATA_WARNING, INSUFFICIENT_DATA]
+            methodUsed:
+              type: string
+              enum: [STANDARD_FORECAST, HYBRID_WMA]
+            advisoryNote:
+              type: string
+
+    ManagedUser:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        entityCode:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: string
+        action:
+          type: string
+        actorId:
+          type: string
+        actorRole:
+          type: string
+        previousState:
+          type: object
+          nullable: true
+        newState:
+          type: object
+        reason:
+          type: string
+          nullable: true
+        idempotencyKey:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Cek kesehatan API SmartChain
+      responses:
+        '200':
+          description: Layanan sehat
+
+  /api/openapi.yaml:
+    get:
+      tags: [Health]
+      summary: Unduh spesifikasi OpenAPI 3.0.3 (YAML)
+      responses:
+        '200':
+          description: Dokumen OpenAPI YAML
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login email & kata sandi untuk memperoleh token JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: pengadaan@nusantara-mfg.co.id
+                password:
+                  type: string
+                  minLength: 4
+                  example: smartchain123
+      responses:
+        '200':
+          description: Autentikasi berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                      user:
+                        $ref: '#/components/schemas/AuthUser'
+                  error:
+                    nullable: true
+        '401':
+          description: Kredensial tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeError'
+        '403':
+          description: Akun dinonaktifkan oleh SYSTEM_ADMIN
+
+  /api/auth/personas:
+    get:
+      tags: [Auth]
+      summary: Daftar persona peran uji coba
+      responses:
+        '200':
+          description: Daftar persona demo
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Profil pengguna terautentikasi saat ini
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profil pengguna aktif
+
+  /api/dashboard/overview:
+    get:
+      tags: [Dashboard & Audit]
+      summary: Ringkasan KPI operasional lintas pabrik, pemasok, gudang, & distribusi
+      security:
+        - BearerAuth: []
+      description: 'Diizinkan untuk: `DIREKSI`, `PROCUREMENT_MANAGER`, `WAREHOUSE_OPERATOR`, `LOGISTICS_MANAGER`.'
+      responses:
+        '200':
+          description: KPI lintas modul dan daftar pabrik/gudang
+
+  /api/dashboard/audit-logs:
+    get:
+      tags: [Dashboard & Audit]
+      summary: Baca catatan Immutable Audit Log (append-only)
+      security:
+        - BearerAuth: []
+      description: 'Diizinkan untuk: `DIREKSI`, `PROCUREMENT_MANAGER`, `WAREHOUSE_OPERATOR`, `LOGISTICS_MANAGER`, `SYSTEM_ADMIN`.'
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Daftar log audit terbaru
+
+  /api/srm/suppliers:
+    get:
+      tags: [SRM]
+      summary: Daftar pemasok utama (15) dan cadangan Tier-2 (5)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Daftar pemasok
+
+  /api/srm/suppliers/{id}/status:
+    patch:
+      tags: [SRM]
+      summary: Ubah status pasokan pemasok (mis. tandai berhenti 14 hari)
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `PROCUREMENT_MANAGER`.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID atau kode pemasok (mis. SUP-01)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ACTIVE, HALTED, STANDBY]
+                haltedDays:
+                  type: integer
+                  minimum: 0
+                  maximum: 90
+                  default: 0
+      responses:
+        '200':
+          description: Status pemasok diperbarui
+        '403':
+          description: Ditolak RBAC
+
+  /api/srm/rfq-fallback:
+    post:
+      tags: [SRM]
+      summary: Picu RFQ otomatis ke pemasok cadangan Tier-2 & sesuaikan ROP
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `PROCUREMENT_MANAGER`.'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                haltedSupplierIdOrCode:
+                  type: string
+                  example: SUP-01
+                haltedDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 90
+                  example: 14
+                materialId:
+                  type: string
+                factoryId:
+                  type: string
+      responses:
+        '201':
+          description: Draf RFQ fallback berhasil dibuat & ROP diperbarui
+
+  /api/po:
+    get:
+      tags: [Purchase Orders]
+      summary: Daftar Purchase Order (terisolasi per entityCode untuk PARTNER)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Daftar Purchase Order
+    post:
+      tags: [Purchase Orders]
+      summary: Terbitkan Purchase Order baru terhubung ambang ROP
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `PROCUREMENT_MANAGER`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplierIdOrCode, materialIdOrSku, factoryIdOrCode, quantity]
+              properties:
+                supplierIdOrCode:
+                  type: string
+                  example: SUP-04
+                materialIdOrSku:
+                  type: string
+                  example: MAT-01
+                factoryIdOrCode:
+                  type: string
+                  example: FAC-01
+                quantity:
+                  type: integer
+                  minimum: 1
+                  example: 300
+                notes:
+                  type: string
+      responses:
+        '201':
+          description: Purchase Order berhasil diterbitkan
+
+  /api/po/{id}/status:
+    patch:
+      tags: [Purchase Orders]
+      summary: Perbarui status PO (persetujuan pengadaan atau konfirmasi pengiriman mitra)
+      security:
+        - BearerAuth: []
+      description: 'Diizinkan untuk: `PROCUREMENT_MANAGER`, `PARTNER`.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [APPROVED, IN_TRANSIT, RECEIVED, CANCELLED]
+      responses:
+        '200':
+          description: Status PO diperbarui
+
+  /api/wms/overview:
+    get:
+      tags: [WMS & Offline Sync]
+      summary: Stok RFID/fisik/karantina di 8 gudang dan log sinkronisasi terbaru
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Ringkasan stok gudang dan sync logs
+
+  /api/wms/warehouses/{id}/network:
+    patch:
+      tags: [WMS & Offline Sync]
+      summary: Atur status jaringan gudang (ONLINE / OFFLINE 48 jam)
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `WAREHOUSE_OPERATOR`.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [networkStatus]
+              properties:
+                networkStatus:
+                  type: string
+                  enum: [ONLINE, OFFLINE]
+                offlineHours:
+                  type: integer
+                  minimum: 0
+                  maximum: 240
+                  default: 0
+      responses:
+        '200':
+          description: Status jaringan gudang diperbarui
+
+  /api/wms/sync-batch:
+    post:
+      tags: [WMS & Offline Sync]
+      summary: Sinkronisasi batch transaksi offline gudang secara kronologis & idempoten
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `WAREHOUSE_OPERATOR`. Duplikat `idempotencyKey` dilewati tanpa mutasi ganda.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/OfflineScanItem'
+      responses:
+        '200':
+          description: Hasil sinkronisasi batch beserta daftar duplicate key yang dilewati
+
+  /api/wms/reconcile:
+    post:
+      tags: [WMS & Offline Sync]
+      summary: Rekonsiliasi cycle count (RFID vs fisik) dan karantina selisih stok
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `WAREHOUSE_OPERATOR`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stockId]
+              properties:
+                stockId:
+                  type: string
+                overridePhysicalQty:
+                  type: integer
+                  minimum: 0
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Selisih stok dipindahkan ke karantina dan dicatat di AuditLog
+
+  /api/orders:
+    get:
+      tags: [Orders & Anomaly Guard]
+      summary: Daftar pesanan distributor (terisolasi per entityCode untuk PARTNER)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Daftar sales order
+
+  /api/orders/validate:
+    post:
+      tags: [Orders & Anomaly Guard]
+      summary: Validasi Anomaly Guard (>150% kuota / batas kredit) sebelum mengunci stok
+      security:
+        - BearerAuth: []
+      description: 'Diizinkan untuk: `LOGISTICS_MANAGER`, `PARTNER` (distributor terikat entityCode).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                orderIdOrNumber:
+                  type: string
+                  example: ORD-882
+                distributorIdOrCode:
+                  type: string
+                  example: DIST-01
+                materialIdOrSku:
+                  type: string
+                  example: MAT-01
+                requestedQty:
+                  type: integer
+                  minimum: 1
+                  example: 120
+                depositConfirmed:
+                  type: boolean
+                  example: false
+      responses:
+        '200':
+          description: Hasil penilaian Anomaly Guard dan status alokasi
+
+  /api/orders/allocate-surge:
+    post:
+      tags: [Orders & Anomaly Guard]
+      summary: Alokasi stok berbasis prioritas SLA Tier-1/2/3 saat lonjakan permintaan +300%
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `LOGISTICS_MANAGER`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [materialId]
+              properties:
+                materialId:
+                  type: string
+                availableStockOverride:
+                  type: integer
+                  minimum: 0
+                  example: 280
+      responses:
+        '200':
+          description: Keputusan alokasi SLA per pesanan dan sisa stok
+
+  /api/tms/shipments:
+    get:
+      tags: [TMS]
+      summary: Daftar pengiriman dan jadwal konsolidasi TMS
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Daftar shipment
+
+  /api/tms/consolidate:
+    post:
+      tags: [TMS]
+      summary: Konsolidasi muatan searah (routeGroup) untuk menekan lonjakan biaya transport
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `LOGISTICS_MANAGER`.'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                routeGroup:
+                  type: string
+                  example: JAWA_BARAT
+                transportSurgePercent:
+                  type: number
+                  minimum: 0
+                  maximum: 200
+                  example: 40
+      responses:
+        '200':
+          description: Rencana konsolidasi batch dan persentase penghematan biaya (28%)
+
+  /api/analytics/forecast:
+    get:
+      tags: [Business Analytics]
+      summary: Hitung Safety Stock dinamis, ROP, & proyeksi Hybrid WMA adaptif
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: surgeMultiplier
+          in: query
+          schema:
+            type: number
+            minimum: 1
+            maximum: 10
+            default: 1
+        - name: leadTimeDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+      responses:
+        '200':
+          description: Analisis Safety Stock, ROP, seri historis, & proyeksi Hybrid WMA
+
+  /api/admin/users:
+    get:
+      tags: [System Admin]
+      summary: Daftar seluruh akun pengguna & status RBAC
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `SYSTEM_ADMIN`.'
+      responses:
+        '200':
+          description: Daftar akun pengguna
+    post:
+      tags: [System Admin]
+      summary: Daftarkan akun pengguna baru dengan peran RBAC tertentu
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `SYSTEM_ADMIN`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, role, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                name:
+                  type: string
+                role:
+                  $ref: '#/components/schemas/UserRole'
+                entityCode:
+                  type: string
+                  description: Wajib diisi jika role adalah PARTNER (mis. SUP-01 atau DIST-01)
+                password:
+                  type: string
+                  minLength: 6
+      responses:
+        '201':
+          description: Akun berhasil dibuat dan dicatat ke AuditLog
+
+  /api/admin/users/{id}/access:
+    patch:
+      tags: [System Admin]
+      summary: Ubah peran RBAC atau aktif/nonaktifkan akun pengguna
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `SYSTEM_ADMIN`. Tidak dapat menonaktifkan atau menurunkan peran sendiri.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  $ref: '#/components/schemas/UserRole'
+                entityCode:
+                  type: string
+                  nullable: true
+                isActive:
+                  type: boolean
+      responses:
+        '200':
+          description: Akses pengguna diperbarui
+
+  /api/admin/users/{id}/reset-password:
+    post:
+      tags: [System Admin]
+      summary: Reset kata sandi akun pengguna
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `SYSTEM_ADMIN`.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+                  minLength: 6
+      responses:
+        '200':
+          description: Kata sandi berhasil direset dan dicatat ke AuditLog
