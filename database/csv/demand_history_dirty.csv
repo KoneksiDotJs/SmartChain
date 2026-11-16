@@ -1,0 +1,13 @@
+material_sku,period_label,period_index,observed_qty,is_missing
+MAT-01,M1-W1,1,410,false
+MAT-01,M1-W2,2,435,false
+MAT-01,M1-W3,3,,true
+MAT-01,M1-W4,4,460,false
+MAT-01,M2-W1,5,490,false
+MAT-01,M2-W2,6,,true
+MAT-01,M2-W3,7,515,false
+MAT-01,M2-W4,8,530,false
+MAT-01,M3-W1,9,,true
+MAT-01,M3-W2,10,555,false
+MAT-01,M3-W3,11,580,false
+MAT-01,M3-W4,12,,true

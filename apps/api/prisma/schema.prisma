@@ -1,0 +1,312 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  DIREKSI
+  PROCUREMENT_MANAGER
+  WAREHOUSE_OPERATOR
+  LOGISTICS_MANAGER
+  PARTNER
+}
+
+enum SupplierTier {
+  MAIN
+  BACKUP
+}
+
+enum SupplierStatus {
+  ACTIVE
+  HALTED
+  STANDBY
+}
+
+enum PurchaseOrderStatus {
+  DRAFT_RFQ
+  PENDING_APPROVAL
+  APPROVED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum NetworkStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum SyncDirection {
+  IN
+  OUT
+  CYCLE_COUNT
+}
+
+enum SlaTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+enum AllocationStatus {
+  PENDING
+  APPROVED_SLA
+  HELD_ANOMALY
+  PARTIAL_ALLOCATED
+  DISPATCHED
+}
+
+enum TrackingStatus {
+  PLANNED
+  CONSOLIDATED
+  IN_TRANSIT
+  DELIVERED
+}
+
+model UserAccount {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  role         UserRole
+  entityCode   String?  // Optional linked supplier/distributor code for PARTNER role
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("user_accounts")
+}
+
+model Factory {
+  id               String          @id @default(cuid())
+  code             String          @unique
+  name             String
+  city             String
+  dailyCapacity    Int
+  operationalState String          @default("ACTIVE")
+  createdAt        DateTime        @default(now())
+  purchaseOrders   PurchaseOrder[]
+
+  @@map("factories")
+}
+
+model MaterialProduct {
+  id             String          @id @default(cuid())
+  sku            String          @unique
+  name           String
+  category       String
+  unit           String
+  unitCost       Int
+  dailyDemandAvg Float
+  demandStdDev   Float
+  leadTimeDays   Int
+  safetyStock    Int
+  reorderPoint   Int
+  createdAt      DateTime        @default(now())
+  purchaseOrders PurchaseOrder[]
+  stocks         InventoryStock[]
+  salesOrders    SalesOrder[]
+  demandHistory  DemandHistory[]
+
+  @@map("material_products")
+}
+
+model Supplier {
+  id               String          @id @default(cuid())
+  code             String          @unique
+  name             String
+  tierType         SupplierTier
+  slaScore         Float
+  leadTimeDays     Int
+  status           SupplierStatus  @default(ACTIVE)
+  haltedDays       Int             @default(0)
+  haltedAt         DateTime?
+  materialCategory String
+  city             String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  purchaseOrders   PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id            String              @id @default(cuid())
+  poNumber      String              @unique
+  supplierId    String
+  materialId    String
+  factoryId     String
+  quantity      Int
+  isRfqFallback Boolean             @default(false)
+  triggeredByRop Boolean            @default(false)
+  status        PurchaseOrderStatus @default(PENDING_APPROVAL)
+  expectedDate  DateTime
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  supplier Supplier        @relation(fields: [supplierId], references: [id])
+  material MaterialProduct @relation(fields: [materialId], references: [id])
+  factory  Factory         @relation(fields: [factoryId], references: [id])
+
+  @@index([supplierId, status])
+  @@map("purchase_orders")
+}
+
+model Warehouse {
+  id            String           @id @default(cuid())
+  code          String           @unique
+  name          String
+  city          String
+  region        String
+  networkStatus NetworkStatus    @default(ONLINE)
+  offlineHours  Int              @default(0)
+  lastSyncAt    DateTime         @default(now())
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  stocks        InventoryStock[]
+  syncLogs      RfidSyncLog[]
+  shipments     Shipment[]
+
+  @@map("warehouses")
+}
+
+model InventoryStock {
+  id            String        @id @default(cuid())
+  warehouseId   String
+  materialId    String
+  rfidQty       Int
+  physicalQty   Int
+  quarantineQty Int           @default(0)
+  rop           Int
+  safetyStock   Int
+  lastCountedAt DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id])
+  material  MaterialProduct @relation(fields: [materialId], references: [id])
+  syncLogs  RfidSyncLog[]
+
+  @@unique([warehouseId, materialId])
+  @@map("inventory_stocks")
+}
+
+model RfidSyncLog {
+  id               String        @id @default(cuid())
+  stockId          String
+  warehouseId      String
+  idempotencyKey   String        @unique
+  deltaQty         Int
+  direction        SyncDirection
+  offlineTimestamp DateTime
+  syncedAt         DateTime      @default(now())
+  wasOffline       Boolean       @default(false)
+  operatorId       String
+
+  stock     InventoryStock @relation(fields: [stockId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+
+  @@index([warehouseId, offlineTimestamp])
+  @@map("rfid_sync_logs")
+}
+
+model Distributor {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  name         String
+  city         String
+  routeGroup   String
+  slaTier      SlaTier
+  slaScore     Float
+  monthlyQuota Int
+  creditLimit  Int
+  usedCredit   Int          @default(0)
+  createdAt    DateTime     @default(now())
+  salesOrders  SalesOrder[]
+
+  @@map("distributors")
+}
+
+model SalesOrder {
+  id               String           @id @default(cuid())
+  orderNumber      String           @unique
+  distributorId    String
+  materialId       String
+  requestedQty     Int
+  allocatedQty     Int              @default(0)
+  unitPrice        Int
+  totalAmount      Int
+  anomalyFlag      Boolean          @default(false)
+  anomalyReason    String?
+  slaPriority      Int              @default(50)
+  allocationStatus AllocationStatus @default(PENDING)
+  depositConfirmed Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  distributor Distributor     @relation(fields: [distributorId], references: [id])
+  material    MaterialProduct @relation(fields: [materialId], references: [id])
+  shipments   Shipment[]
+
+  @@index([allocationStatus, slaPriority])
+  @@map("sales_orders")
+}
+
+model Shipment {
+  id                   String         @id @default(cuid())
+  shipmentNumber       String         @unique
+  orderId              String
+  warehouseId          String
+  routeGroup           String
+  carrierName          String
+  baseCost             Int
+  consolidatedCost     Int
+  isConsolidated       Boolean        @default(false)
+  consolidationBatchId String?
+  trackingStatus       TrackingStatus @default(PLANNED)
+  estimatedArrival     DateTime
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  order     SalesOrder @relation(fields: [orderId], references: [id])
+  warehouse Warehouse  @relation(fields: [warehouseId], references: [id])
+
+  @@index([routeGroup, trackingStatus])
+  @@map("shipments")
+}
+
+model DemandHistory {
+  id           String          @id @default(cuid())
+  materialId   String
+  periodLabel  String
+  periodIndex  Int
+  observedQty  Int?            // Nullable to simulate incomplete 3-month dirty historical data
+  isMissing    Boolean         @default(false)
+  recordedAt   DateTime        @default(now())
+
+  material MaterialProduct @relation(fields: [materialId], references: [id])
+
+  @@unique([materialId, periodIndex])
+  @@map("demand_history")
+}
+
+// Immutable Append-Only Audit Log (never UPDATE or DELETE)
+model AuditLog {
+  id             String   @id @default(cuid())
+  entityType     String
+  entityId       String
+  action         String
+  actorId        String
+  actorRole      String
+  previousState  Json?
+  newState       Json
+  reason         String?
+  idempotencyKey String?
+  createdAt      DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,21 @@
+code,name,tier_type,sla_score,lead_time_days,status,halted_days,material_category,city
+SUP-01,PT Baja Nusantara,MAIN,96,4,HALTED,14,LOGAM,Cilegon
+SUP-02,PT Krakatau Logam Abadi,MAIN,95,4,ACTIVE,0,LOGAM,Serang
+SUP-03,CV Polimer Sejahtera,MAIN,93,3,ACTIVE,0,POLIMER,Tangerang
+SUP-04,CV Logam Makmur,MAIN,94,3,ACTIVE,0,LOGAM,Surabaya
+SUP-05,PT Kimia Sintesa Jaya,MAIN,92,4,ACTIVE,0,POLIMER,Bekasi
+SUP-06,PT Presisi Teknik Utama,MAIN,95,4,ACTIVE,0,KOMPONEN,Bandung
+SUP-07,CV Mur Baut Sentosa,MAIN,90,5,ACTIVE,0,KOMPONEN,Sidoarjo
+SUP-08,PT Karton Kemas Prima,MAIN,94,2,ACTIVE,0,KEMASAN,Karawang
+SUP-09,PT Aneka Plat Indonesia,MAIN,91,5,ACTIVE,0,LOGAM,Gresik
+SUP-10,PT Indo Resin Mandiri,MAIN,89,4,ACTIVE,0,POLIMER,Cikarang
+SUP-11,PT Fastener Nusantara,MAIN,92,3,ACTIVE,0,KOMPONEN,Semarang
+SUP-12,CV Packaging Jaya,MAIN,88,3,ACTIVE,0,KEMASAN,Solo
+SUP-13,PT Sinar Metalurgi,MAIN,93,4,ACTIVE,0,LOGAM,Jakarta
+SUP-14,PT Petro Polimer Timur,MAIN,90,5,ACTIVE,0,POLIMER,Pasuruan
+SUP-15,PT Karya Kemas Nusantara,MAIN,91,3,ACTIVE,0,KEMASAN,Mojokerto
+SUP-16,PT Mitra Bahan Cadangan,BACKUP,91,5,STANDBY,0,LOGAM,Bekasi
+SUP-17,PT Cadangan Polimer Prima,BACKUP,90,4,STANDBY,0,POLIMER,Depok
+SUP-18,CV Komponen Siaga,BACKUP,88,5,STANDBY,0,KOMPONEN,Klaten
+SUP-19,PT Kemas Cepat Cadangan,BACKUP,89,3,STANDBY,0,KEMASAN,Subang
+SUP-20,PT Multi Logam Alternatif,BACKUP,87,6,STANDBY,0,LOGAM,Surabaya

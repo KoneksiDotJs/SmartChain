@@ -1,0 +1,9 @@
+warehouse_code,warehouse_name,city,network_status,offline_hours,material_sku,rfid_qty,physical_qty,quarantine_qty
+WH-01,Gudang #01 (Cikarang Pusat),Bekasi,ONLINE,0,MAT-01,280,280,0
+WH-02,Gudang #02 (Bandung Barat),Bandung,ONLINE,0,MAT-01,305,305,0
+WH-03,Gudang #03 (Semarang Pelabuhan),Semarang,ONLINE,0,MAT-01,330,330,0
+WH-04,Gudang #04 (Surabaya),Surabaya,OFFLINE,48,MAT-01,500,320,0
+WH-05,Gudang #05 (Gresik Industri),Gresik,ONLINE,0,MAT-01,380,380,0
+WH-06,Gudang #06 (Solo Distribusi),Surakarta,ONLINE,0,MAT-01,405,405,0
+WH-07,Gudang #07 (Cilegon Bahan Baku),Cilegon,ONLINE,0,MAT-01,430,430,0
+WH-08,Gudang #08 (Sidoarjo Transit),Sidoarjo,ONLINE,0,MAT-01,455,455,0

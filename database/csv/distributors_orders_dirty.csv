@@ -1,0 +1,6 @@
+order_number,distributor_code,distributor_name,route_group,sla_tier,sla_score,monthly_quota,requested_qty,deposit_confirmed,allocation_status
+ORD-881,DIST-01,PT Distribusi Timur,JAWA_BARAT,TIER_1,96,130,120,true,APPROVED_SLA
+ORD-882,DIST-02,CV Sentosa Jaya,JAWA_BARAT,TIER_1,95,150,480,false,HELD_ANOMALY
+ORD-883,DIST-03,PT Surya Mandiri,JAWA_TIMUR,TIER_1,94,110,95,true,APPROVED_SLA
+ORD-884,DIST-05,PT Mitra Niaga Jakarta 5,JAWA_BARAT,TIER_1,94,110,105,true,APPROVED_SLA
+ORD-885,DIST-07,PT Mitra Niaga Malang 7,JAWA_TIMUR,TIER_1,95,130,110,true,APPROVED_SLA

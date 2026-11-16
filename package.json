@@ -1,0 +1,19 @@
+{
+  "name": "smartchain-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SmartChain: Integrated Supply Chain Intelligence for PT Nusantara Manufacturing",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace=apps/api run dev",
+    "dev:web": "npm --workspace=apps/web run dev",
+    "build": "npm --workspace=apps/api run build && npm --workspace=apps/web run build",
+    "test": "npm --workspace=apps/api run test",
+    "db:generate": "npm --workspace=apps/api run prisma:generate",
+    "db:migrate": "npm --workspace=apps/api run prisma:migrate",
+    "db:seed": "npm --workspace=apps/api run prisma:seed"
+  }
+}
