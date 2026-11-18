@@ -14,6 +14,9 @@ export function createPrismaTmsRepository(prisma: PrismaClient): TmsRepository {
       routeGroupFilter?: string,
       distributorCodeFilter?: string,
     ): Promise<ShipmentCandidate[]> {
+      if (distributorCodeFilter !== undefined && !distributorCodeFilter.trim()) {
+        return [];
+      }
       const rows = await prisma.shipment.findMany({
         where: {
           ...(routeGroupFilter ? { routeGroup: routeGroupFilter } : {}),

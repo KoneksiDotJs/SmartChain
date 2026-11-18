@@ -6,10 +6,12 @@ import helmet from 'helmet';
 import type { PrismaClient } from '@prisma/client';
 import { loadEnv } from './config/env.js';
 import { sendSuccess } from './lib/response.js';
+import { registerUserAuthLookup, type SmartChainRole } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createAnalyticsRouter } from './modules/analytics/analytics.routes.js';
 import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { createDashboardRouter } from './modules/dashboard/dashboard.routes.js';
+import { createInventoryRouter } from './modules/inventory/inventory.routes.js';
 import { createOrdersRouter } from './modules/orders/orders.routes.js';
 import { createPoRouter } from './modules/po/po.routes.js';
 import { createSrmRouter } from './modules/srm/srm.routes.js';
@@ -20,6 +22,26 @@ import { createWmsRouter } from './modules/wms/wms.routes.js';
 export function createApp(prisma: PrismaClient): Express {
   const app = express();
   const env = loadEnv();
+
+  registerUserAuthLookup(async (userId) => {
+    const account = await prisma.userAccount.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        entityCode: true,
+        isActive: true,
+        tokenVersion: true,
+      },
+    });
+    if (!account) return null;
+    return {
+      ...account,
+      role: account.role as SmartChainRole,
+    };
+  });
 
   app.use(helmet());
   app.use(
@@ -59,6 +81,7 @@ export function createApp(prisma: PrismaClient): Express {
   app.use('/api/dashboard', createDashboardRouter(prisma));
   app.use('/api/srm', createSrmRouter(prisma));
   app.use('/api/po', createPoRouter(prisma));
+  app.use('/api/inventory', createInventoryRouter(prisma));
   app.use('/api/wms', createWmsRouter(prisma));
   app.use('/api/orders', createOrdersRouter(prisma));
   app.use('/api/tms', createTmsRouter(prisma));

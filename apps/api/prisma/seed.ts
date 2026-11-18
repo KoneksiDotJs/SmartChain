@@ -6,6 +6,10 @@ ensureEnvLoaded();
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_SEED !== 'true') {
+    throw new Error('Dilarang menjalankan prisma/seed.ts pada NODE_ENV=production tanpa ALLOW_DEV_SEED=true.');
+  }
+
   console.log('Seeding SmartChain PT Nusantara Manufacturing dataset...');
 
   // Clean in reverse dependency order (AuditLog is left append-only unless resetting dev DB)
@@ -22,39 +26,39 @@ async function main() {
   await prisma.factory.deleteMany();
   await prisma.userAccount.deleteMany();
 
-  // 1. Base User Accounts (Internal RBAC Roles)
-  const defaultHash = hashPassword('smartchain123');
+  // 1. Base User Accounts (Internal RBAC Roles) — unique salted scrypt per account
+  const seedPlain = process.env.SEED_DEFAULT_PASSWORD ?? 'smartchain123';
   await prisma.userAccount.createMany({
     data: [
       {
         email: 'direksi@nusantara-mfg.co.id',
         name: 'Dewi Kartika (Direksi)',
         role: 'DIREKSI',
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       },
       {
         email: 'pengadaan@nusantara-mfg.co.id',
         name: 'Budi Santoso (Manajer Pengadaan)',
         role: 'PROCUREMENT_MANAGER',
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       },
       {
         email: 'gudang@nusantara-mfg.co.id',
         name: 'Rina Wijaya (Operator Gudang #04)',
         role: 'WAREHOUSE_OPERATOR',
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       },
       {
         email: 'logistik@nusantara-mfg.co.id',
         name: 'Hendra Pratama (Manajer Logistik)',
         role: 'LOGISTICS_MANAGER',
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       },
       {
         email: 'admin@nusantara-mfg.co.id',
         name: 'Irwan Hakim (Admin Sistem IT)',
         role: 'SYSTEM_ADMIN',
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       },
     ],
   });
@@ -287,7 +291,7 @@ async function main() {
         name: `${sup.name} (${sup.tierType === 'BACKUP' ? 'Cadangan' : 'Pemasok'})`,
         role: 'PARTNER' as const,
         entityCode: sup.code,
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       })),
       ...distributors.map((dist) => ({
         email:
@@ -299,7 +303,7 @@ async function main() {
         name: `${dist.name} (Distributor)`,
         role: 'PARTNER' as const,
         entityCode: dist.code,
-        passwordHash: defaultHash,
+        passwordHash: hashPassword(seedPlain),
       })),
     ],
   });

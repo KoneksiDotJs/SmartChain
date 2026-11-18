@@ -2,10 +2,16 @@ import type { AuditWriter } from '../../lib/audit.js';
 import { AppError } from '../../lib/response.js';
 import {
   applyStockDelta,
+  buildWarehouseLabelPayload,
   computeCycleCountReconciliation,
+  parseBarcodeOrRfidTag,
   prepareOrderedBatch,
+  type IssuedWarehouseLabel,
   type OfflineScanItem,
+  type ParsedScanTag,
   type ReconciliationResult,
+  type SyncDirection,
+  type WarehouseLabelType,
 } from './wms.domain.js';
 import type { WmsRepository } from './wms.repository.js';
 
@@ -120,6 +126,163 @@ export function createWmsService(repo: WmsRepository, audit: AuditWriter) {
         appliedCount,
         skippedDuplicateKeys,
         updatedStockIds: Array.from(updatedStockIds),
+      };
+    },
+
+    async scanTag(
+      input: {
+        rawCode: string;
+        warehouseCode?: string;
+        direction: SyncDirection;
+        quantityOverride?: number;
+        idempotencyKey: string;
+      },
+      actor: { id: string; role: string },
+    ): Promise<{
+      parsedTag: ParsedScanTag;
+      warehouseCode: string;
+      quantityApplied: number;
+      duplicateSkipped: boolean;
+      stock: { id: string; rfidQty: number; physicalQty: number; quarantineQty: number };
+    }> {
+      const parsedTag = parseBarcodeOrRfidTag(input.rawCode);
+      if (!parsedTag) {
+        throw new AppError(
+          'Format Barcode/RFID tidak dikenali atau kuantitas melampaui batas (maks 100.000). Gunakan format RFID:MAT-01:WH-04:10, EPC-MAT01-WH04-001, BC-MAT01-10, atau EAN 8991001...',
+          400,
+          'INVALID_SCAN_CODE',
+        );
+      }
+
+      const warehouseCode = input.warehouseCode ?? parsedTag.warehouseCode ?? 'WH-04';
+      const stock = await repo.findStockByWarehouseAndSku(warehouseCode, parsedTag.materialSku);
+      if (!stock) {
+        throw new AppError(
+          `Stok untuk ${parsedTag.materialSku} di ${warehouseCode} tidak ditemukan`,
+          404,
+          'STOCK_NOT_FOUND',
+        );
+      }
+
+      const existing = await repo.findSyncLogByIdempotencyKey(input.idempotencyKey);
+      if (existing) {
+        return {
+          parsedTag,
+          warehouseCode,
+          quantityApplied: 0,
+          duplicateSkipped: true,
+          stock: {
+            id: stock.id,
+            rfidQty: stock.rfidQty,
+            physicalQty: stock.physicalQty,
+            quarantineQty: stock.quarantineQty,
+          },
+        };
+      }
+
+      const quantityApplied = input.quantityOverride ?? parsedTag.suggestedQty;
+      const { nextRfidQty, nextPhysicalQty } = applyStockDelta(
+        stock.rfidQty,
+        stock.physicalQty,
+        quantityApplied,
+        input.direction,
+      );
+
+      const updated = await repo.applySyncTransaction({
+        stockId: stock.id,
+        warehouseId: stock.warehouseId,
+        nextRfidQty,
+        nextPhysicalQty,
+        syncLog: {
+          stockId: stock.id,
+          warehouseId: stock.warehouseId,
+          idempotencyKey: input.idempotencyKey,
+          deltaQty: quantityApplied,
+          direction: input.direction,
+          offlineTimestamp: new Date(),
+          wasOffline: false,
+          operatorId: actor.id,
+        },
+      });
+
+      await audit.append({
+        entityType: 'InventoryStock',
+        entityId: stock.id,
+        action: `WMS_${parsedTag.tagType}_SCANNED`,
+        actorId: actor.id,
+        actorRole: actor.role,
+        previousState: { rfidQty: stock.rfidQty, physicalQty: stock.physicalQty },
+        newState: {
+          rawCode: parsedTag.rawCode,
+          tagType: parsedTag.tagType,
+          materialSku: parsedTag.materialSku,
+          warehouseCode,
+          direction: input.direction,
+          quantityApplied,
+          rfidQty: updated.rfidQty,
+          physicalQty: updated.physicalQty,
+        },
+        idempotencyKey: input.idempotencyKey,
+        reason: `Pindai ${parsedTag.tagType} (${parsedTag.rawCode}) -> ${input.direction} ${quantityApplied} unit di ${warehouseCode}`,
+      });
+
+      return {
+        parsedTag,
+        warehouseCode,
+        quantityApplied,
+        duplicateSkipped: false,
+        stock: {
+          id: updated.id,
+          rfidQty: updated.rfidQty,
+          physicalQty: updated.physicalQty,
+          quarantineQty: updated.quarantineQty,
+        },
+      };
+    },
+
+    async issueBarcodeLabel(
+      input: {
+        labelType: WarehouseLabelType;
+        materialSku: string;
+        warehouseCode: string;
+        quantity: number;
+        batchCode?: string;
+      },
+      actor: { id: string; role: string },
+    ): Promise<IssuedWarehouseLabel & { stockId: string }> {
+      const label = buildWarehouseLabelPayload(input);
+      const stock = await repo.findStockByWarehouseAndSku(label.warehouseCode, label.materialSku);
+      if (!stock) {
+        throw new AppError(
+          `Stok untuk ${label.materialSku} di ${label.warehouseCode} tidak ditemukan`,
+          404,
+          'STOCK_NOT_FOUND',
+        );
+      }
+
+      await audit.append({
+        entityType: 'InventoryStock',
+        entityId: stock.id,
+        action: 'WMS_LABEL_GENERATED',
+        actorId: actor.id,
+        actorRole: actor.role,
+        previousState: {
+          warehouseCode: label.warehouseCode,
+          materialSku: label.materialSku,
+        },
+        newState: {
+          rawCode: label.rawCode,
+          labelType: label.labelType,
+          scanTagType: label.scanTagType,
+          quantity: label.quantity,
+          batchCode: label.batchCode,
+        },
+        reason: `Penerbitan label ${label.labelType} (${label.rawCode}) untuk ${label.quantity} unit di ${label.warehouseCode}`,
+      });
+
+      return {
+        ...label,
+        stockId: stock.id,
       };
     },
 

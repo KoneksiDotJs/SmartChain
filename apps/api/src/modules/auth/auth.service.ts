@@ -1,87 +1,129 @@
 import crypto from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
+import { loadEnv } from '../../config/env.js';
 import { AppError } from '../../lib/response.js';
 import { signJwtToken, type AuthUser, type SmartChainRole } from '../../middleware/auth.js';
 
 export interface LoginPayload {
   email: string;
   password: string;
+  expectedRole?: SmartChainRole;
 }
 
 export interface DemoPersona {
   email: string;
   name: string;
   role: SmartChainRole;
-  roleLabel: string;
   entityCode?: string;
+  roleLabel: string;
   workspaceSummary: string;
 }
 
 export const DEMO_PERSONAS: DemoPersona[] = [
   {
     email: 'direksi@nusantara-mfg.co.id',
-    name: 'Dewi Kartika',
+    name: 'Dewi Kartika (Direksi)',
     role: 'DIREKSI',
-    roleLabel: 'Direksi Perusahaan',
-    workspaceSummary: 'Control Tower eksekutif, Business Analytics WMA, dan Audit Log (hanya-baca).',
+    roleLabel: 'Direksi / Eksekutif (Hanya Baca)',
+    workspaceSummary: 'Memantau KPI control tower, proyeksi Hybrid WMA, dan audit log lintas 6 modul.',
   },
   {
     email: 'pengadaan@nusantara-mfg.co.id',
-    name: 'Budi Santoso',
+    name: 'Budi Santoso (Manajer Pengadaan)',
     role: 'PROCUREMENT_MANAGER',
     roleLabel: 'Manajer Pengadaan & Produksi',
-    workspaceSummary: 'Kelola 15+ pemasok, RFQ cadangan Tier-2, persetujuan PO, dan kalkulasi ROP.',
+    workspaceSummary: 'Mengelola pemasok utama/cadangan (SRM), memicu Auto-RFQ Tier-2, dan menerbitkan PO berbasis ROP.',
   },
   {
     email: 'gudang@nusantara-mfg.co.id',
-    name: 'Rina Wijaya',
+    name: 'Rina Wijaya (Operator Gudang #04)',
     role: 'WAREHOUSE_OPERATOR',
-    roleLabel: 'Operator Gudang #04 (WMS)',
-    workspaceSummary: 'Pemindaian Barcode/RFID, antrean offline IndexedDB 48 jam, dan karantina selisih.',
+    roleLabel: 'Operator Gudang & WMS',
+    workspaceSummary: 'Menjalankan pindai Barcode/RFID, generator label, sinkronisasi offline IndexedDB, dan karantina selisih stok.',
   },
   {
     email: 'logistik@nusantara-mfg.co.id',
-    name: 'Hendra Pratama',
+    name: 'Hendra Kusuma (Manajer Logistik)',
     role: 'LOGISTICS_MANAGER',
     roleLabel: 'Manajer Distribusi & Logistik',
-    workspaceSummary: 'Validasi Anomaly Guard, alokasi prioritas SLA, dan konsolidasi rute TMS.',
+    workspaceSummary: 'Memverifikasi Anomaly Guard pesanan, alokasi prioritas SLA Tier-1, dan konsolidasi rute TMS.',
   },
   {
     email: 'mitra@bajanusantara.co.id',
-    name: 'PT Baja Nusantara',
+    name: 'PT Baja Nusantara (SUP-01)',
     role: 'PARTNER',
-    roleLabel: 'Mitra Pemasok (SUP-01)',
     entityCode: 'SUP-01',
-    workspaceSummary: 'Portal eksternal pemasok: konfirmasi PO/RFQ dan status pengiriman bahan baku.',
+    roleLabel: 'Portal Mitra Pemasok (SUP-01)',
+    workspaceSummary: 'Mengonfirmasi Purchase Order masuk dan memperbarui status pengiriman ke pabrik.',
   },
   {
     email: 'order@distribusitimur.co.id',
-    name: 'PT Distribusi Timur',
+    name: 'PT Distribusi Timur (DIST-01)',
     role: 'PARTNER',
-    roleLabel: 'Mitra Distributor (DIST-01)',
     entityCode: 'DIST-01',
-    workspaceSummary: 'Portal eksternal distributor: pengajuan pesanan kuota dan pelacakan resi TMS.',
+    roleLabel: 'Portal Mitra Distributor (DIST-01)',
+    workspaceSummary: 'Mengajukan Sales Order terproteksi Anomaly Guard dan memantau jadwal pengiriman.',
   },
   {
     email: 'admin@nusantara-mfg.co.id',
-    name: 'Irwan Hakim',
+    name: 'Arif Pratama (Admin Sistem)',
     role: 'SYSTEM_ADMIN',
     roleLabel: 'Admin Sistem & Akses IT',
     workspaceSummary: 'Kelola akun pengguna, peran RBAC, reset sandi, dan audit keamanan (tanpa akses transaksi bisnis).',
   },
 ];
 
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keylen: 64 } as const;
+
 export function hashPassword(plain: string): string {
-  return crypto.createHash('sha256').update(`smartchain:${plain}`).digest('hex');
+  const saltHex = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(plain, saltHex, SCRYPT_PARAMS.keylen, {
+    N: SCRYPT_PARAMS.N,
+    r: SCRYPT_PARAMS.r,
+    p: SCRYPT_PARAMS.p,
+  });
+  return `scrypt$${saltHex}$${derived.toString('hex')}`;
 }
 
-function passwordCheckFailed(plain: string): boolean {
-  return plain !== 'smartchain123';
+export function verifyPassword(plain: string, storedHash: string): boolean {
+  if (storedHash.startsWith('scrypt$')) {
+    const parts = storedHash.split('$');
+    if (parts.length !== 3 || !parts[1] || !parts[2]) return false;
+    const expectedBuf = Buffer.from(parts[2], 'hex');
+    const actualBuf = crypto.scryptSync(plain, parts[1], expectedBuf.length, {
+      N: SCRYPT_PARAMS.N,
+      r: SCRYPT_PARAMS.r,
+      p: SCRYPT_PARAMS.p,
+    });
+    return expectedBuf.length === actualBuf.length && crypto.timingSafeEqual(actualBuf, expectedBuf);
+  }
+
+  // Constant-time support for legacy static-salted SHA-256 digests during rotation
+  const legacyDigest = crypto.createHash('sha256').update(`smartchain:${plain}`).digest('hex');
+  const expectedBuf = Buffer.from(storedHash, 'utf8');
+  const actualBuf = Buffer.from(legacyDigest, 'utf8');
+  return expectedBuf.length === actualBuf.length && crypto.timingSafeEqual(actualBuf, expectedBuf);
+}
+
+function assertExpectedPortalRole(
+  actualRole: SmartChainRole,
+  expectedRole?: SmartChainRole,
+): void {
+  if (expectedRole && actualRole !== expectedRole) {
+    throw new AppError(
+      `Akun berstatus ${actualRole} tidak diizinkan masuk melalui portal login ${expectedRole}. Silakan gunakan portal login peran Anda.`,
+      403,
+      'PORTAL_ROLE_MISMATCH',
+    );
+  }
 }
 
 export function createAuthService(prisma: PrismaClient) {
   return {
     async login(payload: LoginPayload): Promise<{ token: string; user: AuthUser }> {
+      const normalized = payload.email.trim().toLowerCase();
+      const env = loadEnv();
+
       let account: {
         id: string;
         email: string;
@@ -89,14 +131,23 @@ export function createAuthService(prisma: PrismaClient) {
         role: string;
         entityCode: string | null;
         isActive: boolean;
+        tokenVersion: number;
         passwordHash: string;
       } | null = null;
 
       try {
         account = await prisma.userAccount.findUnique({
-          where: { email: payload.email },
+          where: { email: normalized },
         });
       } catch {
+        // Fail closed on database errors in production and by default; dev sandbox fallback requires explicit opt-in
+        if (!env.demoAuthEnabled || process.env.ALLOW_DEMO_DB_FALLBACK !== 'true') {
+          throw new AppError(
+            'Layanan autentikasi basis data sedang tidak tersedia',
+            503,
+            'AUTH_STORE_UNAVAILABLE',
+          );
+        }
         account = null;
       }
 
@@ -108,7 +159,7 @@ export function createAuthService(prisma: PrismaClient) {
             'ACCOUNT_DISABLED',
           );
         }
-        if (account.passwordHash !== hashPassword(payload.password)) {
+        if (!verifyPassword(payload.password, account.passwordHash)) {
           throw new AppError('Email atau kata sandi tidak valid', 401, 'INVALID_CREDENTIALS');
         }
         const user: AuthUser = {
@@ -117,18 +168,27 @@ export function createAuthService(prisma: PrismaClient) {
           name: account.name,
           role: account.role as SmartChainRole,
           entityCode: account.entityCode ?? undefined,
+          tokenVersion: account.tokenVersion,
         };
+        assertExpectedPortalRole(user.role, payload.expectedRole);
         return { token: signJwtToken(user), user };
       }
 
-      // Fallback against built-in demo accounts when DB is not yet seeded, still enforcing password check
-      const normalized = payload.email.trim().toLowerCase();
-      if (passwordCheckFailed(payload.password)) {
+      // Demo fallback is disabled completely in production
+      if (!env.demoAuthEnabled) {
+        throw new AppError('Email atau kata sandi tidak valid', 401, 'INVALID_CREDENTIALS');
+      }
+
+      const devDemoPass = process.env.DEV_DEMO_PASSWORD ?? 'smartchain123';
+      const passBuf = Buffer.from(payload.password, 'utf8');
+      const expectedDemoBuf = Buffer.from(devDemoPass, 'utf8');
+      if (passBuf.length !== expectedDemoBuf.length || !crypto.timingSafeEqual(passBuf, expectedDemoBuf)) {
         throw new AppError('Email atau kata sandi tidak valid', 401, 'INVALID_CREDENTIALS');
       }
 
       const demo = DEMO_PERSONAS.find((p) => p.email.toLowerCase() === normalized);
       if (demo) {
+        assertExpectedPortalRole(demo.role, payload.expectedRole);
         const user: AuthUser = {
           id: `demo-${demo.role.toLowerCase()}-${demo.entityCode ?? 'hq'}`,
           email: demo.email,
@@ -141,6 +201,7 @@ export function createAuthService(prisma: PrismaClient) {
 
       const partnerMatch = /^(sup|dist)-(\d{2})@mitra\.nusantara-mfg\.co\.id$/.exec(normalized);
       if (partnerMatch) {
+        assertExpectedPortalRole('PARTNER', payload.expectedRole);
         const entityCode = `${partnerMatch[1]!.toUpperCase()}-${partnerMatch[2]!}`;
         const user: AuthUser = {
           id: `demo-partner-${entityCode.toLowerCase()}`,
@@ -156,7 +217,8 @@ export function createAuthService(prisma: PrismaClient) {
     },
 
     listPersonas(): DemoPersona[] {
-      return DEMO_PERSONAS;
+      const { demoAuthEnabled } = loadEnv();
+      return demoAuthEnabled ? DEMO_PERSONAS : [];
     },
   };
 }

@@ -23,7 +23,8 @@ PT Nusantara Manufacturing saat ini mengoperasikan unit pengadaan, pergudangan, 
 | **Manajer Pengadaan & Produksi** | 15 pemasok utama + cadangan, 3 pabrik | Kelola SRM, persetujuan PO, pemicu RFQ cadangan, dan kebutuhan bahan baku. |
 | **Manajer & Operator Gudang** | 8 gudang & pemindaian Barcode/RFID | Catat mutasi stok (mode *online* dan *offline* 48 jam), *cycle count*, dan karantina selisih. |
 | **Manajer Distribusi & Logistik** | 25 distributor & armada pengiriman | Validasi anomali order, alokasi stok berbasis SLA, dan konsolidasi rute TMS. |
-| **Mitra Eksternal** | Pemasok & Distributor | Akses portal terbatas untuk konfirmasi PO/RFQ dan pengajuan serta pelacakan order. |
+| **Mitra Eksternal** | Pemasok (20) & Distributor (25) | Akses portal terbatas sesuai `entityCode` untuk konfirmasi PO/RFQ dan pengajuan serta pelacakan order. |
+| **Admin Sistem IT (`SYSTEM_ADMIN`)** | Keamanan & manajemen akun RBAC | Buat/nonaktifkan akun, ubah peran, reset sandi, & audit akses (diblokir dari transaksi bisnis). |
 
 ---
 
@@ -37,7 +38,8 @@ PT Nusantara Manufacturing saat ini mengoperasikan unit pengadaan, pergudangan, 
 | **FR-04** | **Offline-First Sync** | Catat transaksi gudang secara lokal saat jaringan terputus hingga 48 jam, lalu sinkronkan saat daring. | Pemindaian saat *offline* tersimpan di antrean lokal; saat koneksi pulih, *batch sync* memproses data berdasar *timestamp* tanpa duplikasi (*idempotency key*). |
 | **FR-05** | **Order Anomaly Guard** | Deteksi pesanan fiktif distributor dan terapkan prioritas alokasi berbasis SLA. | Order yang melebihi ambang kuota historis (mis. >150% tanpa konfirmasi) otomatis ditahan (*flag* anomali) sebelum mengunci stok. |
 | **FR-06** | **TMS & Distribusi** | Kelola pengiriman ke 25 distributor, lacak status, dan konsolidasikan rute/muatan. | Modul TMS dapat mengelompokkan pengiriman searah untuk menekan lonjakan biaya transportasi (+40%). |
-| **FR-07** | **Business Analytics** | Hitung *safety stock*, ROP, evaluasi kinerja, dan *demand forecasting* adaptif. | Saat data historis 3 bulan terakhir tidak lengkap, sistem memakai metode statistik hibrida (*Weighted Moving Average*) dan menampilkan penanda kualitas data. |
+| **FR-07** | **Business Analytics** | Hitung *safety stock*, ROP, evaluasi kinerja pemasok/distribusi, dan *demand forecasting* adaptif. | Saat data historis 3 bulan terakhir tidak lengkap, sistem memakai metode statistik hibrida (*Weighted Moving Average*) dan menampilkan penanda kualitas data serta *scorecard* kinerja pemasok & distribusi. |
+| **FR-08** | **Inventory & Traceability** | Buku besar persediaan lintas 8 gudang dan pelacakan hubungan entitas hulu ke hilir. | Operator dan manajer dapat menelusuri relasi Pemasok → Bahan Baku → 3 Pabrik → 8 Gudang → Order → Resi TMS → 25 Distributor dalam satu tampilan terintegrasi. |
 
 ---
 

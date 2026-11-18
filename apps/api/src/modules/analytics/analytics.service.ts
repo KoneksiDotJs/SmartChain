@@ -2,6 +2,8 @@ import {
   calculateReorderPoint,
   calculateSafetyStock,
   computeHybridWmaForecast,
+  evaluateDistributionPerformance,
+  evaluateSuppliersPerformance,
   type DataQualityStatus,
   type DemandPoint,
   type HybridWmaResult,
@@ -98,6 +100,28 @@ export function createAnalyticsService(repo: AnalyticsRepository) {
         overallDataQuality: hasIncomplete ? 'INCOMPLETE_DATA_WARNING' : 'COMPLETE',
         averageCompletenessPercent,
         materials,
+      };
+    },
+
+    async getPerformanceEvaluation() {
+      const { suppliers, corridors } = await repo.getPerformanceInputs();
+      const supplierCards = evaluateSuppliersPerformance(suppliers);
+      const distributionCorridors = evaluateDistributionPerformance(corridors);
+
+      const avgSupplierScore =
+        supplierCards.length === 0
+          ? 0
+          : Number(
+              (
+                supplierCards.reduce((sum, s) => sum + s.compositeScore, 0) /
+                supplierCards.length
+              ).toFixed(1),
+            );
+
+      return {
+        avgSupplierScore,
+        supplierCards,
+        distributionCorridors,
       };
     },
   };

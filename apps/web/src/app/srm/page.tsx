@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useState } from 'react';
 import { InteractiveBarChart } from '@/components/charts/InteractiveBarChart';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -61,13 +62,18 @@ export default function SrmPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="sc-btn-accent"
-          onClick={() => setPendingAction({ type: 'rfq' })}
-        >
-          {rfqTriggered ? 'RFQ Cadangan Aktif' : 'Picu RFQ Pemasok Cadangan'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link href="/po" className="sc-btn-secondary" style={{ textDecoration: 'none' }}>
+            Buka Procurement &amp; PO ({purchaseOrders.length})
+          </Link>
+          <button
+            type="button"
+            className="sc-btn-accent"
+            onClick={() => setPendingAction({ type: 'rfq' })}
+          >
+            {rfqTriggered ? 'RFQ Cadangan Aktif' : 'Picu RFQ Pemasok Cadangan'}
+          </button>
+        </div>
       </div>
 
       {ropShortages.length > 0 && (

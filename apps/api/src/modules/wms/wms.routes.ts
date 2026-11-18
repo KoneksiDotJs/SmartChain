@@ -35,6 +35,20 @@ export function createWmsRouter(prisma: PrismaClient): Router {
   );
 
   router.post(
+    '/scan-tag',
+    requireAuth,
+    requireRoles('WAREHOUSE_OPERATOR'),
+    (req, res, next) => controller.scanTag(req, res, next),
+  );
+
+  router.post(
+    '/labels',
+    requireAuth,
+    requireRoles('WAREHOUSE_OPERATOR'),
+    (req, res, next) => controller.issueLabel(req, res, next),
+  );
+
+  router.post(
     '/reconcile',
     requireAuth,
     requireRoles('WAREHOUSE_OPERATOR'),

@@ -18,5 +18,12 @@ export function createAnalyticsRouter(prisma: PrismaClient): Router {
     (req, res, next) => controller.getForecast(req, res, next),
   );
 
+  router.get(
+    '/performance',
+    requireAuth,
+    requireRoles('DIREKSI', 'PROCUREMENT_MANAGER', 'LOGISTICS_MANAGER'),
+    (req, res, next) => controller.getPerformance(req, res, next),
+  );
+
   return router;
 }

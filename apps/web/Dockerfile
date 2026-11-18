@@ -24,9 +24,12 @@ COPY apps/web/package.json apps/web/package.json
 
 RUN npm ci --omit=dev --workspace=apps/web --include-workspace-root
 
-COPY --from=builder /app/apps/web/.next ./apps/web/.next
-COPY --from=builder /app/apps/web/next.config.ts ./apps/web/next.config.ts
-COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
+COPY --from=builder --chown=node:node /app/apps/web/.next ./apps/web/.next
+COPY --from=builder --chown=node:node /app/apps/web/next.config.ts ./apps/web/next.config.ts
+COPY --from=builder --chown=node:node /app/apps/web/package.json ./apps/web/package.json
+
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 3000
 CMD ["npm", "--workspace=apps/web", "run", "start"]

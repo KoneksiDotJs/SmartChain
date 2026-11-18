@@ -7,6 +7,7 @@ import {
   saveStoredSession,
   smartChainApi,
 } from '@/lib/apiClient';
+import { parseBarcodeOrRfidTag, type ScanTagType } from '@/lib/barcodeRfid';
 import {
   INITIAL_AUDIT_LOGS,
   INITIAL_FORECAST_MATERIALS,
@@ -18,6 +19,7 @@ import {
   INITIAL_WAREHOUSE_STOCKS,
 } from '@/lib/mockSnapshot';
 import {
+  clearAllQueuedScans,
   clearQueuedScans,
   createIdempotencyKey,
   enqueueOfflineScan,
@@ -39,10 +41,27 @@ import type {
 } from '@/lib/types';
 import { ToastRegion } from '@/components/ui/ToastRegion';
 
+export interface ScanHistoryItem {
+  id: string;
+  rawCode: string;
+  tagType: ScanTagType;
+  materialSku: string;
+  warehouseCode: string;
+  direction: 'IN' | 'OUT' | 'CYCLE_COUNT';
+  quantity: number;
+  wasOffline: boolean;
+  idempotencyKey: string;
+  scannedAt: string;
+}
+
 interface SmartChainContextValue {
   session: AuthSession | null;
   authReady: boolean;
-  login: (email: string, password: string) => Promise<{ ok: boolean; message?: string; homeRoute?: string }>;
+  login: (
+    email: string,
+    password: string,
+    expectedRole?: SmartChainRole,
+  ) => Promise<{ ok: boolean; message?: string; homeRoute?: string }>;
   logout: () => void;
   stressMode: boolean;
   setStressMode: (next: boolean) => void;
@@ -56,6 +75,7 @@ interface SmartChainContextValue {
   managedUsers: ManagedUserDto[];
   offlineQueue: QueuedRfidScan[];
   lastSyncedBatch: QueuedRfidScan[];
+  scanHistory: ScanHistoryItem[];
   rfqTriggered: boolean;
   wh04Offline: boolean;
   reconciled: boolean;
@@ -78,6 +98,27 @@ interface SmartChainContextValue {
     direction?: 'IN' | 'OUT' | 'CYCLE_COUNT',
     warehouseCode?: string,
   ) => Promise<void>;
+  scanBarcodeOrRfidTag: (input: {
+    rawCode: string;
+    direction: 'IN' | 'OUT' | 'CYCLE_COUNT';
+    warehouseCodeOverride?: string;
+    quantityOverride?: number;
+  }) => Promise<{ ok: boolean; message: string }>;
+  issueWarehouseLabel: (input: {
+    labelType: 'BARCODE_CODE128' | 'RFID_SMARTTAG' | 'RFID_EPC';
+    materialSku: string;
+    warehouseCode: string;
+    quantity: number;
+    batchCode?: string;
+  }) => Promise<{
+    ok: boolean;
+    rawCode?: string;
+    materialSku?: string;
+    warehouseCode?: string;
+    quantity?: number;
+    batchCode?: string;
+    message: string;
+  }>;
   syncOfflineQueue: (warehouseCode?: string) => Promise<void>;
   replayLastBatchIdempotency: () => Promise<void>;
   reconcileWh04: (warehouseCode?: string) => Promise<void>;
@@ -118,6 +159,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
   const [managedUsers, setManagedUsers] = useState<ManagedUserDto[]>(INITIAL_MANAGED_USERS);
   const [offlineQueue, setOfflineQueue] = useState<QueuedRfidScan[]>([]);
   const [lastSyncedBatch, setLastSyncedBatch] = useState<QueuedRfidScan[]>([]);
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
 
   const [rfqTriggered, setRfqTriggered] = useState(false);
   const [wh04Offline, setWh04Offline] = useState(false);
@@ -162,6 +204,36 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     const stored = loadStoredSession();
+    if (!stored) {
+      setAuthReady(true);
+      return;
+    }
+
+    if (stored.authMode === 'jwt-api') {
+      void smartChainApi.verifyCurrentSession(stored.token).then((res) => {
+        if (!res.ok && (res.status === 401 || res.status === 403)) {
+          saveStoredSession(null);
+          setSession(null);
+          void clearAllQueuedScans().catch(() => {});
+          setOfflineQueue([]);
+          setAuthReady(true);
+          return;
+        }
+        const activeSession =
+          res.ok && res.data?.user
+            ? { ...stored, user: res.data.user }
+            : stored;
+        if (res.ok && res.data?.user) {
+          saveStoredSession(activeSession);
+        }
+        setSession(activeSession);
+        setAuthReady(true);
+        void hydrateFromSession(activeSession);
+        void listQueuedScans().then(setOfflineQueue).catch(() => {});
+      });
+      return;
+    }
+
     setSession(stored);
     setAuthReady(true);
     void hydrateFromSession(stored);
@@ -172,8 +244,8 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
   const activeToken = session?.token ?? null;
 
   const login = useCallback(
-    async (email: string, password: string) => {
-      const res = await authenticateWithPassword(email, password);
+    async (email: string, password: string, expectedRole?: SmartChainRole) => {
+      const res = await authenticateWithPassword(email, password, expectedRole);
       if (!res.ok) {
         return { ok: false, message: res.message };
       }
@@ -189,7 +261,11 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
   const logout = useCallback(() => {
     saveStoredSession(null);
     setSession(null);
-    showToast('Sesi pengguna telah diakhiri');
+    setOfflineQueue([]);
+    setLastSyncedBatch([]);
+    setScanHistory([]);
+    void clearAllQueuedScans().catch(() => {});
+    showToast('Sesi pengguna diakhiri dan antrean lokal terminal dibersihkan');
   }, [showToast]);
 
   const setStressMode = useCallback(
@@ -482,6 +558,183 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
     [activeRole, activeToken, appendAudit, showToast, warehouses],
   );
 
+  const scanBarcodeOrRfidTag = useCallback(
+    async (input: {
+      rawCode: string;
+      direction: 'IN' | 'OUT' | 'CYCLE_COUNT';
+      warehouseCodeOverride?: string;
+      quantityOverride?: number;
+    }): Promise<{ ok: boolean; message: string }> => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        const msg = 'Pemindaian Barcode/RFID hanya dapat dilakukan oleh Operator Gudang';
+        showToast(msg);
+        return { ok: false, message: msg };
+      }
+
+      const parsed = parseBarcodeOrRfidTag(input.rawCode);
+      if (!parsed) {
+        const msg = `Format tag "${input.rawCode}" tidak dikenali. Contoh valid: RFID:MAT-01:WH-04:10, BC-MAT01-015, atau 899100100101`;
+        showToast(msg);
+        return { ok: false, message: msg };
+      }
+
+      const warehouseCode = input.warehouseCodeOverride ?? parsed.warehouseCode ?? 'WH-04';
+      const targetStock =
+        warehouses.find(
+          (w) => w.warehouseCode === warehouseCode && w.materialSku === parsed.materialSku,
+        ) ??
+        warehouses.find((w) => w.warehouseCode === warehouseCode) ??
+        warehouses[0]!;
+
+      const isOffline = targetStock.networkStatus === 'OFFLINE';
+      const qty = input.quantityOverride ?? parsed.suggestedQty;
+      const key = createIdempotencyKey(`${warehouseCode}-${parsed.tagType.toLowerCase()}`);
+
+      setWarehouses((prev) =>
+        prev.map((w) => {
+          if (w.stockId !== targetStock.stockId) return w;
+          if (input.direction === 'IN') {
+            return { ...w, rfidQty: w.rfidQty + qty, physicalQty: w.physicalQty + qty };
+          }
+          if (input.direction === 'OUT') {
+            return {
+              ...w,
+              rfidQty: Math.max(0, w.rfidQty - qty),
+              physicalQty: Math.max(0, w.physicalQty - qty),
+            };
+          }
+          return { ...w, physicalQty: qty };
+        }),
+      );
+
+      const scanEntry: ScanHistoryItem = {
+        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        rawCode: parsed.rawCode,
+        tagType: parsed.tagType,
+        materialSku: parsed.materialSku,
+        warehouseCode,
+        direction: input.direction,
+        quantity: qty,
+        wasOffline: isOffline,
+        idempotencyKey: key,
+        scannedAt: new Date().toISOString(),
+      };
+      setScanHistory((prev) => [scanEntry, ...prev].slice(0, 20));
+
+      if (isOffline) {
+        const queued: QueuedRfidScan = {
+          idempotencyKey: key,
+          stockId: targetStock.stockId,
+          warehouseCode,
+          deltaQty: qty,
+          direction: input.direction,
+          offlineTimestamp: scanEntry.scannedAt,
+          wasOffline: true,
+        };
+        await enqueueOfflineScan(queued);
+        setOfflineQueue(await listQueuedScans());
+        appendAudit({
+          entityType: 'InventoryStock',
+          entityId: targetStock.stockId,
+          action: `WMS_${parsed.tagType}_OFFLINE_QUEUED`,
+          actorRole: activeRole,
+          idempotencyKey: key,
+          reason: `Tag ${parsed.tagType} (${parsed.rawCode}) -> ${input.direction} ${qty} unit (${warehouseCode}) masuk IndexedDB.`,
+        });
+        const msg = `${parsed.tagType} ${parsed.materialSku} (+${qty}) disimpan ke antrean offline ${warehouseCode}`;
+        showToast(msg);
+        return { ok: true, message: msg };
+      }
+
+      await smartChainApi.scanWmsTag(activeToken, {
+        rawCode: parsed.rawCode,
+        warehouseCode,
+        direction: input.direction,
+        quantityOverride: qty,
+        idempotencyKey: key,
+      });
+
+      appendAudit({
+        entityType: 'InventoryStock',
+        entityId: targetStock.stockId,
+        action: `WMS_${parsed.tagType}_SCANNED`,
+        actorRole: activeRole,
+        idempotencyKey: key,
+        reason: `Pindai ${parsed.tagType} (${parsed.rawCode}) -> ${input.direction} ${qty} unit di ${warehouseCode}.`,
+      });
+      const msg = `${parsed.tagType} terdekode: ${parsed.materialSku} (${input.direction} ${qty} unit) di ${warehouseCode}`;
+      showToast(msg);
+      return { ok: true, message: msg };
+    },
+    [activeRole, activeToken, appendAudit, showToast, warehouses],
+  );
+
+  const issueWarehouseLabel = useCallback(
+    async (input: {
+      labelType: 'BARCODE_CODE128' | 'RFID_SMARTTAG' | 'RFID_EPC';
+      materialSku: string;
+      warehouseCode: string;
+      quantity: number;
+      batchCode?: string;
+    }) => {
+      if (activeRole !== 'WAREHOUSE_OPERATOR') {
+        const msg = 'Penerbitan label Barcode/RFID hanya diizinkan untuk Operator Gudang';
+        showToast(msg);
+        return { ok: false, message: msg };
+      }
+
+      const normSku = input.materialSku.trim().toUpperCase();
+      const normWh = input.warehouseCode.trim().toUpperCase();
+      const qty = Math.max(1, Math.min(9999, Math.round(input.quantity)));
+      const compactSku = normSku.replaceAll('-', '');
+      const compactWh = normWh.replaceAll('-', '');
+      const batch = (input.batchCode?.trim().toUpperCase() || 'B001').replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'B001';
+
+      const rawCode =
+        input.labelType === 'RFID_SMARTTAG'
+          ? `RFID:${normSku}:${normWh}:${qty}`
+          : input.labelType === 'RFID_EPC'
+            ? `EPC-${compactSku}-${compactWh}-${batch}`
+            : `BC-${compactSku}-${String(qty).padStart(3, '0')}`;
+
+      const res = await smartChainApi.issueWmsLabel(activeToken, {
+        labelType: input.labelType,
+        materialSku: normSku,
+        warehouseCode: normWh,
+        quantity: qty,
+        batchCode: batch,
+      });
+
+      if (!res.ok && session?.authMode === 'jwt-api') {
+        showToast(res.message);
+        return { ok: false, message: res.message };
+      }
+
+      const stockMatch = warehouses.find(
+        (w) => w.warehouseCode === normWh && w.materialSku === normSku,
+      );
+      appendAudit({
+        entityType: 'InventoryStock',
+        entityId: stockMatch?.stockId ?? `${normWh}-${normSku}`,
+        action: 'WMS_LABEL_GENERATED',
+        actorRole: activeRole,
+        reason: `Label ${input.labelType} (${rawCode}) dicetak untuk ${qty} unit di ${normWh} [Batch ${batch}].`,
+      });
+      const msg = `Label ${rawCode} diterbitkan & dicatat ke audit gudang ${normWh}`;
+      showToast(msg);
+      return {
+        ok: true,
+        rawCode,
+        materialSku: normSku,
+        warehouseCode: normWh,
+        quantity: qty,
+        batchCode: batch,
+        message: msg,
+      };
+    },
+    [activeRole, activeToken, appendAudit, session?.authMode, showToast, warehouses],
+  );
+
   const syncOfflineQueue = useCallback(
     async (warehouseCode = 'WH-04') => {
       if (activeRole !== 'WAREHOUSE_OPERATOR') {
@@ -746,16 +999,17 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         activeRole === 'PARTNER' && session?.user.entityCode
           ? session.user.entityCode
           : distributorCode;
+      const effectiveDeposit = activeRole === 'PARTNER' ? false : depositConfirmed;
 
       await smartChainApi.validateOrder(activeToken, {
         distributorIdOrCode: scopedCode,
         materialIdOrSku: 'MAT-01',
         requestedQty,
-        depositConfirmed,
+        depositConfirmed: effectiveDeposit,
       });
 
       const template = salesOrders.find((o) => o.distributorCode === scopedCode) ?? salesOrders[0]!;
-      const isAnomaly = requestedQty > template.monthlyQuota * 1.5 && !depositConfirmed;
+      const isAnomaly = requestedQty > template.monthlyQuota * 1.5 && !effectiveDeposit;
       const orderNo = `ORD-${Date.now().toString().slice(-3)}`;
 
       const created: SalesOrderDto = {
@@ -776,7 +1030,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
           ? `Volume (${requestedQty} unit) melebihi 150% kuota bulanan (${template.monthlyQuota} unit) tanpa deposit.`
           : null,
         allocationStatus: isAnomaly ? 'HELD_ANOMALY' : 'APPROVED_SLA',
-        depositConfirmed,
+        depositConfirmed: effectiveDeposit,
       };
 
       setSalesOrders((prev) => [created, ...prev]);
@@ -968,6 +1222,7 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         managedUsers,
         offlineQueue,
         lastSyncedBatch,
+        scanHistory,
         rfqTriggered,
         wh04Offline,
         reconciled,
@@ -980,6 +1235,8 @@ export function SmartChainProvider({ children }: { children: React.ReactNode }) 
         updatePoStatus,
         toggleWh04Offline,
         scanWh04Rfid,
+        scanBarcodeOrRfidTag,
+        issueWarehouseLabel,
         syncOfflineQueue,
         replayLastBatchIdempotency,
         reconcileWh04,

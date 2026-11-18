@@ -16,7 +16,7 @@ export function createSrmRouter(prisma: PrismaClient): Router {
   router.get(
     '/suppliers',
     requireAuth,
-    requireRoles('DIREKSI', 'PROCUREMENT_MANAGER', 'WAREHOUSE_OPERATOR', 'LOGISTICS_MANAGER', 'PARTNER'),
+    requireRoles('DIREKSI', 'PROCUREMENT_MANAGER', 'WAREHOUSE_OPERATOR', 'LOGISTICS_MANAGER'),
     (req, res, next) => controller.listSuppliers(req, res, next),
   );
 

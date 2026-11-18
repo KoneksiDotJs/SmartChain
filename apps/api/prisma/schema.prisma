@@ -75,6 +75,7 @@ model UserAccount {
   role         UserRole
   entityCode   String?  // Optional linked supplier/distributor code for PARTNER role
   isActive     Boolean  @default(true)
+  tokenVersion Int      @default(0)
   passwordHash String
   createdAt    DateTime @default(now())
 

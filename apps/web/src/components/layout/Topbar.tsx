@@ -7,7 +7,12 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { SmartChainLogoIcon } from '@/components/ui/Icons';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useSmartChainMode } from '@/hooks/useSmartChainMode';
-import { getHomeRouteForRole, getNavItemsForRole, getRoleLabel } from '@/lib/rbac';
+import {
+  getHomeRouteForRole,
+  getLoginRouteForRole,
+  getNavItemsForRole,
+  getRoleLabel,
+} from '@/lib/rbac';
 
 export function Topbar() {
   const pathname = usePathname();
@@ -81,9 +86,10 @@ export function Topbar() {
         tone={offlineQueue.length > 0 ? 'accent' : 'primary'}
         onCancel={() => setLogoutModalOpen(false)}
         onConfirm={() => {
+          const exitRoute = getLoginRouteForRole(session.user.role);
           setLogoutModalOpen(false);
           logout();
-          router.push('/login');
+          router.push(exitRoute);
         }}
       />
     </>

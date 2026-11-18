@@ -35,6 +35,10 @@ export default function AdminAccessPage() {
 
   const [pendingStatusUser, setPendingStatusUser] = useState<ManagedUserDto | null>(null);
   const [pendingResetUser, setPendingResetUser] = useState<ManagedUserDto | null>(null);
+  const [pendingRoleChange, setPendingRoleChange] = useState<{
+    user: ManagedUserDto;
+    nextRole: SmartChainRole;
+  } | null>(null);
   const [resetPwdInput, setResetPwdInput] = useState('smartchain123');
 
   const roleCounts = ALL_ROLES.map((r) => {
@@ -284,11 +288,12 @@ export default function AdminAccessPage() {
                       className="sc-select"
                       disabled={isSelf}
                       value={u.role}
-                      onChange={(e) =>
-                        void updateManagedUserAccess(u.id, {
-                          role: e.target.value as SmartChainRole,
-                        })
-                      }
+                      onChange={(e) => {
+                        const nextRole = e.target.value as SmartChainRole;
+                        if (nextRole !== u.role) {
+                          setPendingRoleChange({ user: u, nextRole });
+                        }
+                      }}
                     >
                       {ALL_ROLES.map((r) => (
                         <option key={r.value} value={r.value}>
@@ -372,6 +377,27 @@ export default function AdminAccessPage() {
           setPendingResetUser(null);
           if (target) {
             void resetManagedUserPassword(target.id, resetPwdInput);
+          }
+        }}
+      />
+
+      <ConfirmModal
+        open={pendingRoleChange !== null}
+        title={`Ubah Peran RBAC ${pendingRoleChange?.user.email ?? ''}?`}
+        description="Perubahan peran akan langsung mencabut sesi token sebelumnya dan tercatat di Audit Log."
+        detailNote={
+          pendingRoleChange
+            ? `${pendingRoleChange.user.role} -> ${pendingRoleChange.nextRole}`
+            : ''
+        }
+        confirmLabel="Ya, Ubah Peran"
+        tone="accent"
+        onCancel={() => setPendingRoleChange(null)}
+        onConfirm={() => {
+          const change = pendingRoleChange;
+          setPendingRoleChange(null);
+          if (change) {
+            void updateManagedUserAccess(change.user.id, { role: change.nextRole });
           }
         }}
       />

@@ -98,3 +98,19 @@ export async function clearQueuedScans(keys: string[]): Promise<void> {
   });
   db.close();
 }
+
+export async function clearAllQueuedScans(): Promise<void> {
+  if (!hasIndexedDb()) {
+    memoryFallback = [];
+    return;
+  }
+
+  const db = await openQueueDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}

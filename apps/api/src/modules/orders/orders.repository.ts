@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { AppError } from '../../lib/response.js';
 import type { AllocationStatus, OrderForAllocation, SlaTier } from './orders.domain.js';
 
 export interface SalesOrderSummaryRow {
@@ -131,6 +132,9 @@ function mapSalesOrder(row: {
 export function createPrismaOrdersRepository(prisma: PrismaClient): OrdersRepository {
   return {
     async listOrders(distributorCodeFilter?: string): Promise<SalesOrderSummaryRow[]> {
+      if (distributorCodeFilter !== undefined && !distributorCodeFilter.trim()) {
+        return [];
+      }
       const rows = await prisma.salesOrder.findMany({
         where: distributorCodeFilter
           ? { distributor: { code: distributorCodeFilter } }
@@ -179,7 +183,15 @@ export function createPrismaOrdersRepository(prisma: PrismaClient): OrdersReposi
         }),
       ]);
       if (!dist || !mat) return null;
-      const availablePhysicalStock = mat.stocks.reduce((sum, s) => sum + s.physicalQty, 0);
+      const reservedAgg = await prisma.salesOrder.aggregate({
+        where: {
+          materialId: mat.id,
+          allocationStatus: { in: ['APPROVED_SLA', 'PARTIAL_ALLOCATED'] },
+        },
+        _sum: { allocatedQty: true },
+      });
+      const totalPhysical = mat.stocks.reduce((sum, s) => sum + s.physicalQty, 0);
+      const availablePhysicalStock = Math.max(0, totalPhysical - (reservedAgg._sum.allocatedQty ?? 0));
       return {
         distributorId: dist.id,
         distributorCode: dist.code,
@@ -196,20 +208,48 @@ export function createPrismaOrdersRepository(prisma: PrismaClient): OrdersReposi
     },
 
     async getAvailableStockForMaterial(materialId: string): Promise<number> {
-      const agg = await prisma.inventoryStock.aggregate({
-        where: { materialId },
-        _sum: { physicalQty: true },
-      });
-      return agg._sum.physicalQty ?? 0;
+      const [agg, reservedAgg] = await Promise.all([
+        prisma.inventoryStock.aggregate({
+          where: { materialId },
+          _sum: { physicalQty: true },
+        }),
+        prisma.salesOrder.aggregate({
+          where: {
+            materialId,
+            allocationStatus: { in: ['APPROVED_SLA', 'PARTIAL_ALLOCATED'] },
+          },
+          _sum: { allocatedQty: true },
+        }),
+      ]);
+      return Math.max(0, (agg._sum.physicalQty ?? 0) - (reservedAgg._sum.allocatedQty ?? 0));
     },
 
     async createOrder(params): Promise<SalesOrderSummaryRow> {
-      const row = await prisma.salesOrder.create({
-        data: params,
-        include: {
-          distributor: true,
-          material: { select: { sku: true, name: true } },
-        },
+      const row = await prisma.$transaction(async (tx) => {
+        if (!params.anomalyFlag && params.allocatedQty > 0) {
+          const dist = await tx.distributor.findUnique({
+            where: { id: params.distributorId },
+            select: { usedCredit: true, creditLimit: true },
+          });
+          if (!dist || dist.usedCredit + params.totalAmount > dist.creditLimit) {
+            throw new AppError(
+              'Kredit distributor tidak mencukupi untuk alokasi pesanan ini',
+              409,
+              'CREDIT_LIMIT_EXCEEDED',
+            );
+          }
+          await tx.distributor.update({
+            where: { id: params.distributorId },
+            data: { usedCredit: { increment: params.totalAmount } },
+          });
+        }
+        return tx.salesOrder.create({
+          data: params,
+          include: {
+            distributor: true,
+            material: { select: { sku: true, name: true } },
+          },
+        });
       });
       return mapSalesOrder(row);
     },

@@ -21,11 +21,14 @@ COPY apps/web/package.json apps/web/package.json
 
 RUN npm ci --omit=dev --workspace=apps/api --include-workspace-root
 
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
-COPY --from=builder /app/apps/api/scripts ./apps/api/scripts
-COPY docs/openapi.yaml ./docs/openapi.yaml
+COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=node:node /app/apps/api/dist ./apps/api/dist
+COPY --from=builder --chown=node:node /app/apps/api/prisma ./apps/api/prisma
+COPY --from=builder --chown=node:node /app/apps/api/scripts ./apps/api/scripts
+COPY --chown=node:node docs/openapi.yaml ./docs/openapi.yaml
+
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 4000
 CMD ["npm", "--workspace=apps/api", "run", "start"]

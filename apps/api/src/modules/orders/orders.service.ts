@@ -37,13 +37,27 @@ export function createOrdersService(repo: OrdersRepository, audit: AuditWriter) 
           throw new AppError(`Pesanan ${input.orderIdOrNumber} tidak ditemukan`, 404, 'ORDER_NOT_FOUND');
         }
 
+        if (input.actorRole === 'PARTNER') {
+          const scopedCode = input.distributorIdOrCode?.trim().toUpperCase();
+          if (!scopedCode || existing.distributorCode !== scopedCode) {
+            throw new AppError(
+              'Mitra tidak memiliki hak akses untuk memvalidasi pesanan distributor lain',
+              403,
+              'FORBIDDEN',
+            );
+          }
+        }
+
         const assessment = evaluateOrderAnomaly({
           requestedQty: existing.requestedQty,
           monthlyQuota: existing.monthlyQuota,
           orderValue: existing.requestedQty * existing.unitPrice,
           creditLimit: existing.creditLimit,
           usedCredit: existing.usedCredit,
-          depositConfirmed: input.depositConfirmed ?? existing.depositConfirmed,
+          depositConfirmed:
+            input.actorRole === 'PARTNER'
+              ? existing.depositConfirmed
+              : (input.depositConfirmed ?? existing.depositConfirmed),
         });
 
         const slaPriority = computeSlaPriorityScore(existing.slaTier, existing.slaScore);
@@ -96,7 +110,8 @@ export function createOrdersService(repo: OrdersRepository, audit: AuditWriter) 
         throw new AppError('Distributor atau material tidak ditemukan', 404, 'ENTITY_NOT_FOUND');
       }
 
-      const depositConfirmed = input.depositConfirmed ?? false;
+      const depositConfirmed =
+        input.actorRole === 'PARTNER' ? false : (input.depositConfirmed ?? false);
       const totalAmount = input.requestedQty * resolved.unitPrice;
       const assessment = evaluateOrderAnomaly({
         requestedQty: input.requestedQty,
@@ -117,7 +132,7 @@ export function createOrdersService(repo: OrdersRepository, audit: AuditWriter) 
           allocatedQty === input.requestedQty ? 'APPROVED_SLA' : 'PARTIAL_ALLOCATED';
       }
 
-      const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+      const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
       const created = await repo.createOrder({
         orderNumber,
         distributorId: resolved.distributorId,

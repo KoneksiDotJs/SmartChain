@@ -26,7 +26,8 @@ export function createUsersService(repo: UsersRepository, audit: AuditWriter) {
         throw new AppError(`Email ${normalizedEmail} sudah terdaftar`, 409, 'EMAIL_EXISTS');
       }
 
-      if (input.role === 'PARTNER' && !input.entityCode?.trim()) {
+      const trimmedEntity = input.entityCode?.trim().toUpperCase();
+      if (input.role === 'PARTNER' && !trimmedEntity) {
         throw new AppError(
           'Peran PARTNER wajib menyertakan kode entitas (mis. SUP-01 atau DIST-01)',
           400,
@@ -38,7 +39,7 @@ export function createUsersService(repo: UsersRepository, audit: AuditWriter) {
         email: normalizedEmail,
         name: input.name.trim(),
         role: input.role,
-        entityCode: input.role === 'PARTNER' ? input.entityCode?.trim() ?? null : null,
+        entityCode: input.role === 'PARTNER' ? trimmedEntity ?? null : null,
         passwordHash: hashPassword(input.password),
       });
 
@@ -85,7 +86,26 @@ export function createUsersService(repo: UsersRepository, audit: AuditWriter) {
         );
       }
 
-      const updated = await repo.updateAccess(targetId, patch);
+      const nextRole = patch.role ?? existing.role;
+      const candidateEntityCode =
+        patch.entityCode !== undefined
+          ? patch.entityCode?.trim().toUpperCase() || null
+          : existing.entityCode;
+
+      if (nextRole === 'PARTNER' && !candidateEntityCode) {
+        throw new AppError(
+          'Peran PARTNER wajib memiliki kode entitas yang valid (mis. SUP-01 atau DIST-01)',
+          400,
+          'ENTITY_CODE_REQUIRED',
+        );
+      }
+
+      const normalizedPatch: { role?: SmartChainRole; entityCode?: string | null; isActive?: boolean } = {
+        ...patch,
+        entityCode: nextRole === 'PARTNER' ? candidateEntityCode : null,
+      };
+
+      const updated = await repo.updateAccess(targetId, normalizedPatch);
 
       await audit.append({
         entityType: 'UserAccount',

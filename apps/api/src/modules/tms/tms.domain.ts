@@ -67,8 +67,9 @@ export function buildRouteConsolidationPlan(
   let totalConsolidatedCost = 0;
 
   let batchSeq = 1;
+  const runTag = Date.now().toString(36).slice(-4).toUpperCase();
   for (const [routeGroup, items] of byRoute.entries()) {
-    const batchId = `TMS-BATCH-${routeGroup.slice(0, 6).toUpperCase()}-${String(batchSeq).padStart(2, '0')}`;
+    const batchId = `TMS-BATCH-${routeGroup.slice(0, 6).toUpperCase()}-${runTag}-${String(batchSeq).padStart(2, '0')}`;
     batchSeq += 1;
 
     const canConsolidate = items.length >= 2;

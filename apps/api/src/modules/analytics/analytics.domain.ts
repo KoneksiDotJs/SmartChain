@@ -113,3 +113,116 @@ export function computeHybridWmaForecast(
     advisoryNote,
   };
 }
+
+export interface SupplierEvaluationInput {
+  code: string;
+  name: string;
+  tierType: 'MAIN' | 'BACKUP';
+  slaScore: number;
+  leadTimeDays: number;
+  status: 'ACTIVE' | 'HALTED' | 'STANDBY';
+  haltedDays: number;
+  materialCategory: string;
+  poCount: number;
+}
+
+export interface SupplierPerformanceCard {
+  code: string;
+  name: string;
+  tierType: 'MAIN' | 'BACKUP';
+  materialCategory: string;
+  slaScore: number;
+  leadTimeDays: number;
+  onTimeRate: number;
+  compositeScore: number;
+  grade: 'A' | 'B' | 'C';
+  status: string;
+  poCount: number;
+}
+
+export interface DistributionEvaluationInput {
+  routeGroup: string;
+  distributorsCount: number;
+  totalOrders: number;
+  heldAnomalies: number;
+  requestedUnits: number;
+  allocatedUnits: number;
+  baseShippingCost: number;
+  effectiveShippingCost: number;
+  consolidatedCount: number;
+}
+
+export interface DistributionCorridorCard {
+  routeGroup: string;
+  distributorsCount: number;
+  totalOrders: number;
+  heldAnomalies: number;
+  fulfillmentRatePercent: number;
+  costSavingsPercent: number;
+  effectiveShippingCost: number;
+  consolidatedRatePercent: number;
+}
+
+export function evaluateSuppliersPerformance(
+  suppliers: SupplierEvaluationInput[],
+): SupplierPerformanceCard[] {
+  return suppliers.map((s) => {
+    const onTimeRate =
+      s.status === 'HALTED' ? Math.max(40, Math.round(s.slaScore - s.haltedDays * 2.5)) : s.slaScore;
+    const leadTimeEfficiency = Math.max(60, 100 - (s.leadTimeDays - 2) * 8);
+    const compositeScore = Number(
+      (s.slaScore * 0.55 + onTimeRate * 0.3 + leadTimeEfficiency * 0.15).toFixed(1),
+    );
+    const grade: 'A' | 'B' | 'C' =
+      compositeScore >= 92 ? 'A' : compositeScore >= 84 ? 'B' : 'C';
+
+    return {
+      code: s.code,
+      name: s.name,
+      tierType: s.tierType,
+      materialCategory: s.materialCategory,
+      slaScore: s.slaScore,
+      leadTimeDays: s.leadTimeDays,
+      onTimeRate,
+      compositeScore,
+      grade,
+      status: s.status,
+      poCount: s.poCount,
+    };
+  });
+}
+
+export function evaluateDistributionPerformance(
+  corridors: DistributionEvaluationInput[],
+): DistributionCorridorCard[] {
+  return corridors.map((c) => {
+    const fulfillmentRatePercent =
+      c.requestedUnits <= 0
+        ? 100
+        : Number(((c.allocatedUnits / c.requestedUnits) * 100).toFixed(1));
+    const costSavingsPercent =
+      c.baseShippingCost <= 0
+        ? 0
+        : Number(
+            (
+              (Math.max(0, c.baseShippingCost - c.effectiveShippingCost) / c.baseShippingCost) *
+              100
+            ).toFixed(1),
+          );
+    const consolidatedRatePercent =
+      c.totalOrders <= 0
+        ? 0
+        : Number(((c.consolidatedCount / c.totalOrders) * 100).toFixed(1));
+
+    return {
+      routeGroup: c.routeGroup,
+      distributorsCount: c.distributorsCount,
+      totalOrders: c.totalOrders,
+      heldAnomalies: c.heldAnomalies,
+      fulfillmentRatePercent,
+      costSavingsPercent,
+      effectiveShippingCost: c.effectiveShippingCost,
+      consolidatedRatePercent,
+    };
+  });
+}

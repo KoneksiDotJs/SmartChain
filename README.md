@@ -24,28 +24,28 @@ SmartChain/
     │   ├── scripts/              # run-prisma.mjs (loader .env root monorepo)
     │   └── src/
     │       ├── middleware/       # auth.ts (JWT/RBAC), anomalyGuard.ts, errorHandler.ts
-    │       ├── modules/          # auth, srm, po, wms, orders, tms, analytics, dashboard, users
+    │       ├── modules/          # auth, srm, po, inventory, wms, orders, tms, analytics, dashboard, users
     │       └── tests/            # Suite pengujian 6 skenario gangguan & Separation of Duties
     └── web/                      # Next.js 15 (App Router) + React 19 + Tailwind CSS
         └── src/
-            ├── app/              # Halaman per peran (/, /srm, /wms, /tms, /analytics, /partner, /admin, /login)
-            ├── components/       # UI taktil, grafik SVG interaktif, modal konfirmasi in-page
+            ├── app/              # Halaman terpisah per sistem: /, /srm, /po, /inventory, /wms, /tms, /analytics, /partner, /admin, /login
+            ├── components/       # UI taktil, grafik SVG interaktif, modal konfirmasi, & BarcodeRfidScanner
             ├── hooks/            # Context state + hidrasi API + offline sync
-            └── lib/              # apiClient.ts, rbac.ts, offlineQueue.ts (IndexedDB), mockSnapshot.ts
+            └── lib/              # apiClient.ts, rbac.ts, offlineQueue.ts (IndexedDB), barcodeRfid.ts, mockSnapshot.ts
 ```
 
 ---
 
 ## 2. Peran RBAC & *Separation of Duties*
 
-Setiap akun diautentikasi dengan **JWT Bearer Token** (`POST /api/auth/login`) dan diarahkan ke ruang kerja khusus sesuai perannya (tanpa satu *Superadmin* operasional tunggal):
+Setiap akun diautentikasi dengan **JWT Bearer Token** (`POST /api/auth/login` dengan validasi `expectedRole` per portal login) dan diarahkan ke ruang kerja khusus sesuai perannya (tanpa satu *Superadmin* operasional tunggal). Tersedia halaman login terpisah untuk tiap peran: `/login/direksi`, `/login/pengadaan`, `/login/gudang`, `/login/logistik`, `/login/mitra`, dan `/login/admin`.
 
 | Peran | Rute Utama | Wewenang & Fitur Utama |
 | :--- | :--- | :--- |
 | **`DIREKSI`** | `/`, `/analytics` | **Hanya-baca:** Control Tower 3 pabrik, Simulator 6 Gangguan, Grafik Hybrid WMA, Safety Stock/ROP, dan Audit Log. |
-| **`PROCUREMENT_MANAGER`** | `/srm`, `/analytics` | Kelola 15+5 pemasok, hentikan pemasok (14 hari), picu Auto-RFQ Tier-2, buat & setujui PO berbasis ROP. |
-| **`WAREHOUSE_OPERATOR`** | `/wms` | Terminal multi-gudang (`WH-01`–`WH-08`), pemindaian RFID (`IN`/`OUT`/`CYCLE_COUNT`), mode offline 48 jam (IndexedDB), uji replay *idempotency*, & karantina selisih. |
-| **`LOGISTICS_MANAGER`** | `/tms`, `/analytics` | Filter *Anomaly Guard* (>150% kuota / kredit), verifikasi deposit atau tolak order, alokasi prioritas SLA (+300% lonjakan), konsolidasi rute TMS, & direktori 25 distributor. |
+| **`PROCUREMENT_MANAGER`** | `/srm`, `/po`, `/inventory`, `/analytics` | Kelola 15+5 pemasok (SRM), hentikan pemasok 14 hari, Auto-RFQ Tier-2, buat & setujui PO berbasis ROP, & pantau kebutuhan 3 pabrik. |
+| **`WAREHOUSE_OPERATOR`** | `/wms`, `/inventory` | Terminal multi-gudang (`WH-01`–`WH-08`), pemindai **Barcode & RFID** (USB/Kamera/Gerbang), mode offline 48 jam (IndexedDB), & karantina selisih. |
+| **`LOGISTICS_MANAGER`** | `/tms`, `/inventory`, `/analytics` | Filter *Anomaly Guard* (>150% kuota / kredit), verifikasi/tolak order, alokasi SLA (+300%), konsolidasi rute TMS, & 25 distributor. |
 | **`PARTNER`** | `/partner` | **Portal terisolasi per `entityCode`:** Pemasok (`SUP-01`–`SUP-20`) konfirmasi PO/RFQ & kirim barang; Distributor (`DIST-01`–`DIST-25`) ajukan order dengan meteran kuota & lacak resi. |
 | **`SYSTEM_ADMIN`** | `/admin` | **Non-transaksional (IT Security):** Buat akun, ubah peran RBAC, aktif/nonaktifkan akun, reset sandi, & audit akses (diblokir `403` dari transaksi bisnis). |
 
@@ -61,7 +61,7 @@ Kata sandi standar seluruh akun demo: **`smartchain123`**
 
 ## 3. Dokumentasi API (OpenAPI 3.0.3)
 
-Spesifikasi lengkap seluruh 27 operasi API (25 *path*) tersedia di [docs/openapi.yaml](file:///c:/project/SmartChain/docs/openapi.yaml) dan dapat diakses langsung saat server API berjalan melalui:
+Spesifikasi lengkap seluruh 32 operasi API (30 *path*) tersedia di [docs/openapi.yaml](file:///c:/project/SmartChain/docs/openapi.yaml) dan dapat diakses langsung saat server API berjalan melalui:
 
 - `GET http://localhost:4000/api/openapi.yaml`
 
@@ -69,12 +69,15 @@ Anda dapat mengimpor berkas tersebut ke **Swagger Editor**, **Postman**, atau **
 
 - `POST /api/auth/login` — Autentikasi email & kata sandi (`JWT`)
 - `POST /api/srm/rfq-fallback` — RFQ otomatis ke pemasok cadangan Tier-2 & penyesuaian ROP
+- `POST /api/wms/labels` — Terbitkan label Barcode Code128 / RFID SmartTag / EPC ber-`AuditLog` (`WAREHOUSE_OPERATOR`)
+- `POST /api/wms/scan-tag` — Dekode tag Barcode/RFID (`RFID:`, `EPC-`, `BC-`, EAN) & mutasi stok idempoten
 - `POST /api/wms/sync-batch` — Sinkronisasi batch offline ber-`idempotencyKey` tanpa duplikasi
 - `POST /api/wms/reconcile` — Rekonsiliasi *cycle count* & karantina selisih ke *AuditLog*
+- `GET /api/inventory/ledger` & `GET /api/inventory/traceability` — Buku besar stok & pelacakan relasi hulu ke hilir
 - `POST /api/orders/validate` — Validasi *Anomaly Guard* sebelum penguncian stok
 - `POST /api/orders/allocate-surge` — Alokasi prioritas SLA saat lonjakan +300%
 - `POST /api/tms/consolidate` — Penggabungan muatan searah (`routeGroup`) untuk hemat biaya kirim
-- `GET /api/analytics/forecast` — *Safety Stock* dinamis, ROP, & *Hybrid WMA* toleran data bolong
+- `GET /api/analytics/forecast` & `GET /api/analytics/performance` — *Safety Stock* dinamis, ROP, *Hybrid WMA*, & evaluasi kinerja pemasok/distribusi
 - `GET / PATCH / POST /api/admin/users/*` — Manajemen akun & RBAC khusus `SYSTEM_ADMIN`
 
 ---

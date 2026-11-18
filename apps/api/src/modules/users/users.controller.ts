@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { z } from 'zod';
-import { sendSuccess } from '../../lib/response.js';
+import { AppError, sendSuccess } from '../../lib/response.js';
 import { parseWithSchema } from '../../lib/validation.js';
 import type { SmartChainRole } from '../../middleware/auth.js';
 import type { createUsersService } from './users.service.js';
@@ -24,13 +24,20 @@ const createUserSchema = z.object({
 
 const updateAccessSchema = z.object({
   role: roleEnum.optional(),
-  entityCode: z.string().max(24).nullable().optional(),
+  entityCode: z.string().trim().max(24).nullable().optional(),
   isActive: z.boolean().optional(),
 });
 
 const resetPasswordSchema = z.object({
   newPassword: z.string().min(6).max(64),
 });
+
+function requireActor(req: Request): { id: string; role: string } {
+  if (!req.user) {
+    throw new AppError('Pengguna belum terautentikasi', 401, 'UNAUTHORIZED');
+  }
+  return { id: req.user.id, role: req.user.role };
+}
 
 export function createUsersController(service: ReturnType<typeof createUsersService>) {
   return {
@@ -45,13 +52,14 @@ export function createUsersController(service: ReturnType<typeof createUsersServ
 
     async createUser(req: Request, res: Response, next: NextFunction): Promise<void> {
       try {
+        const actor = requireActor(req);
         const body = parseWithSchema(createUserSchema, req.body);
         const user = await service.createUser(
           {
             ...body,
             role: body.role as SmartChainRole,
           },
-          { id: req.user?.id ?? 'system', role: req.user?.role ?? 'SYSTEM' },
+          actor,
         );
         sendSuccess(res, { user }, 201);
       } catch (err) {
@@ -61,6 +69,7 @@ export function createUsersController(service: ReturnType<typeof createUsersServ
 
     async updateAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
       try {
+        const actor = requireActor(req);
         const body = parseWithSchema(updateAccessSchema, req.body);
         const userId = String(req.params.id ?? '');
         const user = await service.updateUserAccess(
@@ -69,7 +78,7 @@ export function createUsersController(service: ReturnType<typeof createUsersServ
             ...body,
             role: body.role as SmartChainRole | undefined,
           },
-          { id: req.user?.id ?? 'system', role: req.user?.role ?? 'SYSTEM' },
+          actor,
         );
         sendSuccess(res, { user });
       } catch (err) {
@@ -79,12 +88,10 @@ export function createUsersController(service: ReturnType<typeof createUsersServ
 
     async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
       try {
+        const actor = requireActor(req);
         const body = parseWithSchema(resetPasswordSchema, req.body);
         const userId = String(req.params.id ?? '');
-        const result = await service.resetPassword(userId, body.newPassword, {
-          id: req.user?.id ?? 'system',
-          role: req.user?.role ?? 'SYSTEM',
-        });
+        const result = await service.resetPassword(userId, body.newPassword, actor);
         sendSuccess(res, result);
       } catch (err) {
         next(err);

@@ -7,12 +7,23 @@ export interface AppEnv {
   jwtSecret: string;
   corsOrigin: string;
   databaseUrl: string;
+  demoAuthEnabled: boolean;
 }
 
+const INSECURE_JWT_PLACEHOLDERS = new Set([
+  'smartchain-dev-jwt-secret-change-me',
+  'replace-with-strong-secret-in-production',
+]);
+
+let envLoadedOnce = false;
+
 /**
- * Loads .env from cwd or monorepo root if variables are not already in process.env.
+ * Loads .env from cwd or monorepo root once if variables are not already in process.env.
  */
 export function ensureEnvLoaded(): void {
+  if (envLoadedOnce) return;
+  envLoadedOnce = true;
+
   const candidates = [
     path.resolve(process.cwd(), '.env'),
     path.resolve(process.cwd(), '../../.env'),
@@ -43,13 +54,26 @@ export function ensureEnvLoaded(): void {
 
 export function loadEnv(): AppEnv {
   ensureEnvLoaded();
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const rawJwtSecret = process.env.JWT_SECRET?.trim();
+
+  if (
+    nodeEnv === 'production' &&
+    (!rawJwtSecret || rawJwtSecret.length < 32 || INSECURE_JWT_PLACEHOLDERS.has(rawJwtSecret))
+  ) {
+    throw new Error(
+      'Konfigurasi tidak aman: JWT_SECRET wajib disetel minimal 32 karakter dan bukan nilai contoh pada NODE_ENV=production.',
+    );
+  }
+
   return {
     port: Number(process.env.PORT ?? 4000),
-    nodeEnv: process.env.NODE_ENV ?? 'development',
-    jwtSecret: process.env.JWT_SECRET ?? 'smartchain-dev-jwt-secret-change-me',
+    nodeEnv,
+    jwtSecret: rawJwtSecret || 'smartchain-dev-jwt-secret-change-me',
     corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
     databaseUrl:
       process.env.DATABASE_URL ??
       'postgresql://smartchain:smartchain_dev_password@localhost:5432/smartchain_db?schema=public',
+    demoAuthEnabled: nodeEnv !== 'production' && process.env.DISABLE_DEMO_AUTH !== 'true',
   };
 }

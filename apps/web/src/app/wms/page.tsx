@@ -6,6 +6,8 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { WifiOffIcon } from '@/components/ui/Icons';
 import { PaperCard, TactileSheet } from '@/components/ui/PaperCard';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { BarcodeLabelGenerator } from '@/components/wms/BarcodeLabelGenerator';
+import { BarcodeRfidScanner } from '@/components/wms/BarcodeRfidScanner';
 import { useSmartChainMode } from '@/hooks/useSmartChainMode';
 
 export default function WmsPage() {
@@ -26,8 +28,12 @@ export default function WmsPage() {
   const [scanDirection, setScanDirection] = useState<'IN' | 'OUT' | 'CYCLE_COUNT'>('IN');
   const [scanQty, setScanQty] = useState('10');
   const [reconcileConfirmOpen, setReconcileConfirmOpen] = useState(false);
+  const [preloadedCode, setPreloadedCode] = useState<{ code: string; seq: number } | null>(null);
 
   const availableSkus = Array.from(new Set(warehouses.map((w) => w.materialSku)));
+  const uniqueWarehouses = Array.from(
+    new Map(warehouses.map((w) => [w.warehouseCode, { code: w.warehouseCode, name: w.warehouseName }])).values(),
+  );
   const scopedWarehouses = warehouses.filter((w) => w.materialSku === selectedSku);
   const displayedWarehouses = scopedWarehouses.length > 0 ? scopedWarehouses : warehouses;
 
@@ -39,6 +45,20 @@ export default function WmsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <BarcodeRfidScanner
+        activeWarehouseCode={activeWh.warehouseCode}
+        preloadedCode={preloadedCode}
+      />
+
+      <BarcodeLabelGenerator
+        activeWarehouseCode={activeWh.warehouseCode}
+        availableSkus={availableSkus}
+        warehouseOptions={uniqueWarehouses}
+        onSendToScanner={(code) =>
+          setPreloadedCode((prev) => ({ code, seq: (prev?.seq ?? 0) + 1 }))
+        }
+      />
+
       <InteractiveBarChart
         title={`Akurasi Stok RFID vs Hitung Fisik — ${selectedSku} (8 Gudang)`}
         subtitle="Selisih antara angka RFID dan fisik disorot oranye dan harus dikarantina."

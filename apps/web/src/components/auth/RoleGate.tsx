@@ -28,7 +28,15 @@ export function RoleGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session || pathname === '/login') {
+  if (!session || pathname === '/login' || pathname.startsWith('/login/')) {
+    if (!session && pathname.startsWith('/login/')) {
+      const slug = pathname.slice('/login/'.length).split('/')[0];
+      return <LoginScreen portalSlug={slug} />;
+    }
+    if (session && pathname.startsWith('/login/')) {
+      const slug = pathname.slice('/login/'.length).split('/')[0];
+      return <LoginScreen portalSlug={slug} />;
+    }
     return <LoginScreen />;
   }
 

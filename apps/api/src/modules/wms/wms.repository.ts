@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import type { SyncDirection } from './wms.domain.js';
+import { AppError } from '../../lib/response.js';
+import { applyStockDelta, type SyncDirection } from './wms.domain.js';
 
 export interface WarehouseStockSummary {
   stockId: string;
@@ -43,6 +44,7 @@ export interface InsertSyncLogInput {
 export interface WmsRepository {
   listWarehouseStocks(): Promise<WarehouseStockSummary[]>;
   findStockById(stockId: string): Promise<StockRow | null>;
+  findStockByWarehouseAndSku(warehouseCode: string, materialSku: string): Promise<StockRow | null>;
   findSyncLogByIdempotencyKey(key: string): Promise<{ id: string } | null>;
   applySyncTransaction(params: {
     stockId: string;
@@ -119,6 +121,27 @@ export function createPrismaWmsRepository(prisma: PrismaClient): WmsRepository {
       };
     },
 
+    async findStockByWarehouseAndSku(
+      warehouseCode: string,
+      materialSku: string,
+    ): Promise<StockRow | null> {
+      const row = await prisma.inventoryStock.findFirst({
+        where: {
+          warehouse: { code: warehouseCode },
+          material: { sku: materialSku },
+        },
+      });
+      if (!row) return null;
+      return {
+        id: row.id,
+        warehouseId: row.warehouseId,
+        materialId: row.materialId,
+        rfidQty: row.rfidQty,
+        physicalQty: row.physicalQty,
+        quarantineQty: row.quarantineQty,
+      };
+    },
+
     async findSyncLogByIdempotencyKey(key: string): Promise<{ id: string } | null> {
       return prisma.rfidSyncLog.findUnique({
         where: { idempotencyKey: key },
@@ -127,44 +150,84 @@ export function createPrismaWmsRepository(prisma: PrismaClient): WmsRepository {
     },
 
     async applySyncTransaction(params): Promise<StockRow> {
-      const [updatedStock] = await prisma.$transaction([
-        prisma.inventoryStock.update({
-          where: { id: params.stockId },
-          data: {
-            rfidQty: params.nextRfidQty,
-            physicalQty: params.nextPhysicalQty,
-          },
-        }),
-        prisma.rfidSyncLog.create({
-          data: {
-            stockId: params.syncLog.stockId,
-            warehouseId: params.syncLog.warehouseId,
-            idempotencyKey: params.syncLog.idempotencyKey,
-            deltaQty: params.syncLog.deltaQty,
-            direction: params.syncLog.direction,
-            offlineTimestamp: params.syncLog.offlineTimestamp,
-            wasOffline: params.syncLog.wasOffline,
-            operatorId: params.syncLog.operatorId,
-          },
-        }),
-        prisma.warehouse.update({
-          where: { id: params.warehouseId },
-          data: {
-            networkStatus: 'ONLINE',
-            offlineHours: 0,
-            lastSyncAt: new Date(),
-          },
-        }),
-      ]);
+      return prisma.$transaction(
+        async (tx) => {
+          const dupLog = await tx.rfidSyncLog.findUnique({
+            where: { idempotencyKey: params.syncLog.idempotencyKey },
+            select: { id: true },
+          });
+          const currentStock = await tx.inventoryStock.findUnique({
+            where: { id: params.stockId },
+          });
+          if (!currentStock) {
+            throw new AppError(`InventoryStock ${params.stockId} tidak ditemukan`, 404, 'STOCK_NOT_FOUND');
+          }
+          if (dupLog) {
+            return {
+              id: currentStock.id,
+              warehouseId: currentStock.warehouseId,
+              materialId: currentStock.materialId,
+              rfidQty: currentStock.rfidQty,
+              physicalQty: currentStock.physicalQty,
+              quarantineQty: currentStock.quarantineQty,
+            };
+          }
 
-      return {
-        id: updatedStock.id,
-        warehouseId: updatedStock.warehouseId,
-        materialId: updatedStock.materialId,
-        rfidQty: updatedStock.rfidQty,
-        physicalQty: updatedStock.physicalQty,
-        quarantineQty: updatedStock.quarantineQty,
-      };
+          const { nextRfidQty, nextPhysicalQty } = applyStockDelta(
+            currentStock.rfidQty,
+            currentStock.physicalQty,
+            params.syncLog.deltaQty,
+            params.syncLog.direction,
+          );
+          if (nextRfidQty > 1_000_000_000 || nextPhysicalQty > 1_000_000_000) {
+            throw new AppError(
+              'Kuantitas stok melampaui batas maksimum kapasitas gudang',
+              400,
+              'QUANTITY_LIMIT_EXCEEDED',
+            );
+          }
+
+          const updatedStock = await tx.inventoryStock.update({
+            where: { id: params.stockId },
+            data: {
+              rfidQty: nextRfidQty,
+              physicalQty: nextPhysicalQty,
+            },
+          });
+
+          await tx.rfidSyncLog.create({
+            data: {
+              stockId: params.syncLog.stockId,
+              warehouseId: params.syncLog.warehouseId,
+              idempotencyKey: params.syncLog.idempotencyKey,
+              deltaQty: params.syncLog.deltaQty,
+              direction: params.syncLog.direction,
+              offlineTimestamp: params.syncLog.offlineTimestamp,
+              wasOffline: params.syncLog.wasOffline,
+              operatorId: params.syncLog.operatorId,
+            },
+          });
+
+          await tx.warehouse.update({
+            where: { id: params.warehouseId },
+            data: {
+              networkStatus: 'ONLINE',
+              offlineHours: 0,
+              lastSyncAt: new Date(),
+            },
+          });
+
+          return {
+            id: updatedStock.id,
+            warehouseId: updatedStock.warehouseId,
+            materialId: updatedStock.materialId,
+            rfidQty: updatedStock.rfidQty,
+            physicalQty: updatedStock.physicalQty,
+            quarantineQty: updatedStock.quarantineQty,
+          };
+        },
+        { isolationLevel: 'Serializable' },
+      );
     },
 
     async markWarehouseNetworkStatus(warehouseIdOrCode, networkStatus, offlineHours) {

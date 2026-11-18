@@ -77,13 +77,14 @@ async function requestJson<T>(
 export async function authenticateWithPassword(
   email: string,
   password: string,
+  expectedRole?: SmartChainRole,
 ): Promise<{ ok: true; session: AuthSession } | { ok: false; message: string }> {
   const apiRes = await requestJson<{ token: string; user: AuthUserDto }>(
     '/api/auth/login',
     null,
     {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, expectedRole }),
     },
   );
 
@@ -110,6 +111,12 @@ export async function authenticateWithPassword(
 
   const matched = DEMO_ACCOUNT_PRESETS.find((p) => p.email.toLowerCase() === normalizedEmail);
   if (matched) {
+    if (expectedRole && matched.role !== expectedRole) {
+      return {
+        ok: false,
+        message: `Akun berstatus ${matched.role} tidak diizinkan masuk melalui portal login ${expectedRole}.`,
+      };
+    }
     const session: AuthSession = {
       token: `local-token-${matched.role.toLowerCase()}`,
       user: {
@@ -135,6 +142,13 @@ export async function authenticateWithPassword(
 
   if (!matchedPartner) {
     return { ok: false, message: 'Email atau kata sandi tidak valid' };
+  }
+
+  if (expectedRole && expectedRole !== 'PARTNER') {
+    return {
+      ok: false,
+      message: `Akun Mitra (PARTNER) hanya dapat masuk melalui portal login Mitra (/login/mitra).`,
+    };
   }
 
   const session: AuthSession = {
@@ -203,6 +217,38 @@ export const smartChainApi = {
     return requestJson('/api/wms/sync-batch', token, {
       method: 'POST',
       body: JSON.stringify({ items }),
+    });
+  },
+
+  scanWmsTag(
+    token: string | null,
+    payload: {
+      rawCode: string;
+      warehouseCode?: string;
+      direction: 'IN' | 'OUT' | 'CYCLE_COUNT';
+      quantityOverride?: number;
+      idempotencyKey: string;
+    },
+  ) {
+    return requestJson('/api/wms/scan-tag', token, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  issueWmsLabel(
+    token: string | null,
+    payload: {
+      labelType: 'BARCODE_CODE128' | 'RFID_SMARTTAG' | 'RFID_EPC';
+      materialSku: string;
+      warehouseCode: string;
+      quantity: number;
+      batchCode?: string;
+    },
+  ) {
+    return requestJson('/api/wms/labels', token, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
@@ -285,6 +331,10 @@ export const smartChainApi = {
     );
   },
 
+  verifyCurrentSession(token: string) {
+    return requestJson<{ user: AuthUserDto }>('/api/auth/me', token);
+  },
+
   async fetchRoleWorkspaceData(session: AuthSession): Promise<{
     suppliers?: SupplierDto[];
     purchaseOrders?: PurchaseOrderDto[];
@@ -322,12 +372,15 @@ export const smartChainApi = {
       );
     }
 
-    if (role === 'DIREKSI' || role === 'PROCUREMENT_MANAGER' || isSupplierPartner) {
+    if (role === 'DIREKSI' || role === 'PROCUREMENT_MANAGER') {
       tasks.push(
         requestJson<{ suppliers: SupplierDto[] }>('/api/srm/suppliers', token).then((r) => {
           if (r.ok) results.suppliers = r.data.suppliers;
         }),
       );
+    }
+
+    if (role === 'DIREKSI' || role === 'PROCUREMENT_MANAGER' || isSupplierPartner) {
       tasks.push(
         requestJson<{ orders: PurchaseOrderDto[] }>('/api/po', token).then((r) => {
           if (r.ok) results.purchaseOrders = r.data.orders;

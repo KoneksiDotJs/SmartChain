@@ -91,6 +91,7 @@ export function createPrismaUsersRepository(prisma: PrismaClient): UsersReposito
           ...(patch.role !== undefined ? { role: patch.role } : {}),
           ...(patch.entityCode !== undefined ? { entityCode: patch.entityCode } : {}),
           ...(patch.isActive !== undefined ? { isActive: patch.isActive } : {}),
+          tokenVersion: { increment: 1 },
         },
       });
       return mapUser(updated);
@@ -99,7 +100,10 @@ export function createPrismaUsersRepository(prisma: PrismaClient): UsersReposito
     async updatePasswordHash(id: string, passwordHash: string): Promise<void> {
       await prisma.userAccount.update({
         where: { id },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          tokenVersion: { increment: 1 },
+        },
       });
     },
   };

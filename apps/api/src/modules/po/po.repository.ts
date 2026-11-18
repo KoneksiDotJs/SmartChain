@@ -85,6 +85,9 @@ function mapPoRow(row: {
 export function createPrismaPoRepository(prisma: PrismaClient): PoRepository {
   return {
     async listOrders(supplierCodeFilter?: string): Promise<PoSummaryRow[]> {
+      if (supplierCodeFilter !== undefined && !supplierCodeFilter.trim()) {
+        return [];
+      }
       const rows = await prisma.purchaseOrder.findMany({
         where: supplierCodeFilter ? { supplier: { code: supplierCodeFilter } } : undefined,
         include: {

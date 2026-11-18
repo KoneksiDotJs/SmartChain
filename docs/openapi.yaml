@@ -26,6 +26,8 @@ tags:
     description: Supplier Relationship Management & Auto-RFQ Fallback (FR-01)
   - name: Purchase Orders
     description: Pengadaan dan persetujuan PO berbasis Reorder Point (FR-02)
+  - name: Inventory & Traceability
+    description: Buku besar persediaan lintas 8 gudang dan pelacakan hubungan entitas rantai pasok (FR-08)
   - name: WMS & Offline Sync
     description: Pemantauan stok RFID, sinkronisasi batch offline idempoten, & karantina selisih (FR-03, FR-04)
   - name: Orders & Anomaly Guard
@@ -460,6 +462,9 @@ paths:
                   type: string
                   minLength: 4
                   example: smartchain123
+                expectedRole:
+                  $ref: '#/components/schemas/UserRole'
+                  description: Opsional; bila dikirim oleh portal login khusus peran (/login/{role}), API menolak jika peran akun tidak cocok (403 PORTAL_ROLE_MISMATCH).
       responses:
         '200':
           description: Autentikasi berhasil
@@ -542,6 +547,7 @@ paths:
       summary: Daftar pemasok utama (15) dan cadangan Tier-2 (5)
       security:
         - BearerAuth: []
+      description: 'Khusus peran internal: `DIREKSI`, `PROCUREMENT_MANAGER`, `WAREHOUSE_OPERATOR`, `LOGISTICS_MANAGER`.'
       responses:
         '200':
           description: Daftar pemasok
@@ -691,6 +697,120 @@ paths:
       responses:
         '200':
           description: Ringkasan stok gudang dan sync logs
+
+  /api/inventory/ledger:
+    get:
+      tags: [Inventory & Traceability]
+      summary: Buku besar persediaan lintas 8 gudang beserta status kesehatan ROP & selisih
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: materialSku
+          in: query
+          schema:
+            type: string
+        - name: warehouseCode
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Daftar stok persediaan dan total ringkasan
+
+  /api/inventory/traceability:
+    get:
+      tags: [Inventory & Traceability]
+      summary: Pelacakan hubungan entitas Pemasok -> Pabrik -> Gudang -> Order -> Pengiriman -> Distributor
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: materialSku
+          in: query
+          schema:
+            type: string
+        - name: warehouseCode
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Graf relasi entitas dan ringkasan cakupan
+
+  /api/wms/scan-tag:
+    post:
+      tags: [WMS & Offline Sync]
+      summary: Pindai & dekode tag Barcode (EAN/Code128) atau RFID (EPC/SmartTag) secara idempoten
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `WAREHOUSE_OPERATOR`. Mendukung format `RFID:<SKU>:<WH>:<QTY>`, `EPC-<SKU>-<WH>-<SEQ>`, `BC-<SKU>-<QTY>`, dan EAN-13 `899100...`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rawCode, idempotencyKey]
+              properties:
+                rawCode:
+                  type: string
+                  example: RFID:MAT-01:WH-04:10
+                warehouseCode:
+                  type: string
+                  example: WH-04
+                direction:
+                  type: string
+                  enum: [IN, OUT, CYCLE_COUNT]
+                  default: IN
+                quantityOverride:
+                  type: integer
+                  minimum: 1
+                idempotencyKey:
+                  type: string
+                  example: wh-04-rfid-1794816851
+      responses:
+        '200':
+          description: Tag terdekode dan stok gudang diperbarui tanpa duplikasi
+        '400':
+          description: Format tag Barcode/RFID tidak dikenali
+
+  /api/wms/labels:
+    post:
+      tags: [WMS & Offline Sync]
+      summary: Terbitkan label Barcode Code128 / RFID SmartTag / EPC dan catat AuditLog
+      security:
+        - BearerAuth: []
+      description: 'Khusus peran: `WAREHOUSE_OPERATOR`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [materialSku, warehouseCode, quantity]
+              properties:
+                labelType:
+                  type: string
+                  enum: [BARCODE_CODE128, RFID_SMARTTAG, RFID_EPC]
+                  default: BARCODE_CODE128
+                materialSku:
+                  type: string
+                  example: MAT-01
+                warehouseCode:
+                  type: string
+                  example: WH-04
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 9999
+                  example: 10
+                batchCode:
+                  type: string
+                  example: B2026A
+      responses:
+        '201':
+          description: Payload label diterbitkan dan dicatat pada AuditLog
+        '404':
+          description: Kombinasi SKU dan gudang tidak ditemukan
 
   /api/wms/warehouses/{id}/network:
     patch:
@@ -903,6 +1023,17 @@ paths:
       responses:
         '200':
           description: Analisis Safety Stock, ROP, seri historis, & proyeksi Hybrid WMA
+
+  /api/analytics/performance:
+    get:
+      tags: [Business Analytics]
+      summary: Evaluasi kinerja pemasok (Grade A/B/C) & koridor distribusi (pemenuhan SLA & efisiensi TMS)
+      security:
+        - BearerAuth: []
+      description: 'Diizinkan untuk: `DIREKSI`, `PROCUREMENT_MANAGER`, `LOGISTICS_MANAGER`.'
+      responses:
+        '200':
+          description: Skor komposit pemasok dan metrik kinerja koridor distribusi
 
   /api/admin/users:
     get:

@@ -154,6 +154,12 @@ export function createInMemoryRepositories() {
       const found = stocks.find((s) => s.id === stockId);
       return found ? { ...found } : null;
     },
+    async findStockByWarehouseAndSku(warehouseCode, materialSku) {
+      if (warehouseCode === 'WH-04' && materialSku === 'MAT-01') {
+        return { ...stocks[0]! };
+      }
+      return null;
+    },
     async findSyncLogByIdempotencyKey(key) {
       const found = syncLogs.find((l) => l.idempotencyKey === key);
       return found ? { id: found.id } : null;
@@ -433,6 +439,34 @@ export function createInMemoryRepositories() {
           ],
         },
       ];
+    },
+    async getPerformanceInputs() {
+      return {
+        suppliers: suppliers.map((s) => ({
+          code: s.code,
+          name: s.name,
+          tierType: s.tierType,
+          slaScore: s.slaScore,
+          leadTimeDays: s.leadTimeDays,
+          status: s.status,
+          haltedDays: s.haltedDays,
+          materialCategory: s.materialCategory,
+          poCount: 1,
+        })),
+        corridors: [
+          {
+            routeGroup: 'JAWA_BARAT',
+            distributorsCount: 7,
+            totalOrders: 2,
+            heldAnomalies: 1,
+            requestedUnits: 600,
+            allocatedUnits: 120,
+            baseShippingCost: 11_200_000,
+            effectiveShippingCost: 8_064_000,
+            consolidatedCount: 2,
+          },
+        ],
+      };
     },
   };
 

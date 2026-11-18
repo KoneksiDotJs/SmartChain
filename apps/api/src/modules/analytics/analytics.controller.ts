@@ -23,5 +23,14 @@ export function createAnalyticsController(service: ReturnType<typeof createAnaly
         next(err);
       }
     },
+
+    async getPerformance(_req: Request, res: Response, next: NextFunction): Promise<void> {
+      try {
+        const result = await service.getPerformanceEvaluation();
+        sendSuccess(res, result);
+      } catch (err) {
+        next(err);
+      }
+    },
   };
 }
